@@ -126,3 +126,36 @@ describe("insights", () => {
     expect(await harness.behavior.callRpc("insights_usage", null)).toMatchObject({ totals: { clips: 0 } });
   });
 });
+
+describe("voice profile", () => {
+  const persona = { ok: true, title: "Context Clarifier", description: "You dictate plans.", catchphrase: "commit and push this", peakDescription: "Late nights." };
+  async function seeded(words: number) {
+    const { bb, harness, callHostRpc } = makeHost();
+    callHostRpc.mockImplementation(async ({ method }) => (method === "profile" ? persona : method === "classify" ? { labels: [] } : { ok: true }));
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    const text = Array.from({ length: words }, (_, i) => `word${i}`).join(" ");
+    await harness.behavior.experimental_emitHostSignal("host-1", "clip", { ...clipPayload, rawText: `um ${text}`, text });
+    return { harness, callHostRpc };
+  }
+
+  it("reports no profile and the words still needed", async () => {
+    const { harness } = await seeded(50);
+    expect(await harness.behavior.callRpc("insights_voice", null)).toMatchObject({ profile: null, wordsTotal: 50, wordsUntilNext: 150 });
+  });
+
+  it("generates the first profile once 200 words exist and computes local words", async () => {
+    const { harness, callHostRpc } = await seeded(220);
+    await harness.behavior.runSchedule("profile");
+    expect(callHostRpc.mock.calls.some(([call]) => call.method === "profile")).toBe(true);
+    const voice = await harness.behavior.callRpc("insights_voice", null);
+    expect(voice).toMatchObject({ profile: { title: "Context Clarifier", catchphrase: "commit and push this", mostCorrectedWord: "um" }, wordsTotal: 220, wordsUntilNext: 2000 });
+    expect(harness.inspection.realtimeSignals.some((s) => s.channel === "voice-profile")).toBe(true);
+  });
+
+  it("regenerate forces a new profile", async () => {
+    const { harness, callHostRpc } = await seeded(10);
+    expect(await harness.behavior.callRpc("insights_regenerate", null)).toMatchObject({ ok: true });
+    expect(callHostRpc.mock.calls.filter(([call]) => call.method === "profile")).toHaveLength(1);
+  });
+});

@@ -35,6 +35,13 @@ export const serverHostContract = defineRpcContract({
     input: z.object({ texts: z.array(z.string().min(1)).min(1).max(20) }).strict(),
     output: z.object({ labels: z.array(z.enum(CATEGORIES).nullable()) }).strict(),
   },
+  profile: {
+    input: z.object({ sample: z.array(z.string()).max(300), stats: z.string().max(4000) }).strict(),
+    output: z.union([
+      z.object({ ok: z.literal(true), title: z.string(), description: z.string(), catchphrase: z.string(), peakDescription: z.string() }).strict(),
+      z.object({ ok: z.literal(false) }).strict(),
+    ]),
+  },
 });
 
 /** One finished dictation, emitted by the host after a successful transcription. */

@@ -38,3 +38,19 @@ describe("InsightsStore", () => {
     expect(store.count()).toBe(0);
   });
 });
+
+describe("profile + samples", () => {
+  it("stores and reads the profile", () => {
+    expect(store.getProfile()).toBeNull();
+    store.setProfile({ generatedAt: 5, wordsAt: 100, title: "Context Clarifier", description: "d", catchphrase: "c", peakTitle: "Monday at 9 p.m.", peakDescription: "p", mostUsedWord: "deploy", mostCorrectedWord: "like" });
+    expect(store.getProfile()).toMatchObject({ title: "Context Clarifier", wordsAt: 100, mostUsedWord: "deploy" });
+  });
+  it("returns recent texts newest first and raw/polished pairs for non-translated clips", () => {
+    store.insertClip(clip({ at: 1, text: "first", rawText: "um first" }));
+    store.insertClip(clip({ at: 2, text: "second", rawText: "second", translated: true }));
+    store.insertClip(clip({ at: 3, text: "third", rawText: "uh third" }));
+    expect(store.recentTexts(2)).toEqual(["third", "second"]);
+    expect(store.recentPairs(10)).toEqual([{ rawText: "uh third", text: "third" }, { rawText: "um first", text: "first" }]);
+    expect(store.totalWords()).toBe(3);
+  });
+});

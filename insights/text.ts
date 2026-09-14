@@ -58,3 +58,23 @@ export function topWords(texts: readonly string[], limit: number): { word: strin
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));
 }
+
+/** The raw token most often dropped or replaced by polishing (fillers count; digits don't). */
+export function mostCorrectedWord(pairs: readonly { rawText: string; text: string }[]): string | null {
+  const counts = new Map<string, number>();
+  for (const pair of pairs) {
+    const kept = new Map<string, number>();
+    for (const token of tokenize(pair.text)) kept.set(token, (kept.get(token) ?? 0) + 1);
+    for (const token of tokenize(pair.rawText)) {
+      const remaining = kept.get(token) ?? 0;
+      if (remaining > 0) {
+        kept.set(token, remaining - 1);
+        continue;
+      }
+      if (/^\p{N}+$/u.test(token)) continue;
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+  }
+  const best = [...counts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+  return best === undefined ? null : best[0];
+}

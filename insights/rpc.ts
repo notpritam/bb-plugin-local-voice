@@ -21,7 +21,27 @@ export const usageReportSchema = z.object({
 });
 export type UsageReportDto = z.infer<typeof usageReportSchema>;
 
+export const voiceProfileSchema = z.object({
+  generatedAt: z.number(),
+  title: z.string(),
+  description: z.string(),
+  catchphrase: z.string(),
+  peakTitle: z.string(),
+  peakDescription: z.string(),
+  mostUsedWord: z.string().nullable(),
+  mostCorrectedWord: z.string().nullable(),
+});
+export const voiceReportSchema = z.object({
+  profile: voiceProfileSchema.nullable(),
+  wordsTotal: z.number(),
+  wordsUntilNext: z.number(),
+  generating: z.boolean(),
+});
+export type VoiceReportDto = z.infer<typeof voiceReportSchema>;
+
 export const insightsRpcContract = defineRpcContract({
   insights_usage: { input: z.null(), output: usageReportSchema },
   insights_clear: { input: z.null(), output: z.object({ ok: z.literal(true) }).strict() },
+  insights_voice: { input: z.null(), output: voiceReportSchema },
+  insights_regenerate: { input: z.null(), output: z.object({ ok: z.boolean(), message: z.string().optional() }).strict() },
 });

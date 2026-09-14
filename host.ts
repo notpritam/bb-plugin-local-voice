@@ -5,6 +5,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { experimental_aiServicesHostContract } from "@get-bb/plugin-sdk/ai-services";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { classifyFetch, classifyText } from "./classify.js";
+import { generatePersona, profileFetch } from "./profile.js";
 import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, whisperConfigSchema, type Category, type WhisperConfig } from "./contract.js";
 import { runCommand, transcribeAudio } from "./transcribe.js";
 import { DEFAULT_CONFIG, failure } from "./whisper.js";
@@ -47,6 +48,11 @@ export default experimental_defineHostEntry({
         labels.push(await classifyText({ text, serverUrl: config.serverUrl, model: config.polishModel, signal: context.signal, fetchImpl: classifyFetch }));
       }
       return { labels };
+    },
+    profile: async ({ sample, stats }, context) => {
+      const config = await readConfig(context.experimental_paths.dataDir);
+      const persona = await generatePersona({ sample, stats, serverUrl: config.serverUrl, model: config.polishModel, signal: context.signal, fetchImpl: profileFetch });
+      return persona === null ? { ok: false as const } : { ok: true as const, ...persona };
     },
     "ai.inference.complete": async (input) =>
       failure(

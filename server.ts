@@ -1,9 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, type WhisperConfig } from "./contract.js";
 import { deriveClip } from "./insights/clip.js";
+import { FIRST_PROFILE_WORDS, SAMPLE_CLIPS, isProfileDue, sampleTexts, statsSummary, wordsUntilNext } from "./insights/profile-plan.js";
 import { insightsRpcContract } from "./insights/rpc.js";
 import { migrate } from "./insights/schema.js";
 import { InsightsStore } from "./insights/store.js";
+import { mostCorrectedWord, topWords } from "./insights/text.js";
 import { buildUsageReport } from "./insights/usage.js";
 import { DEFAULT_CONFIG, configFromSettings } from "./whisper.js";
 
@@ -61,13 +63,68 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish("voice-clip", { words: clip.words, day: clip.day });
   });
 
+  // ---- Voice profile: an LLM-written persona refreshed every REFRESH_WORDS words.
+  let generating = false;
+  async function generateProfile(force: boolean): Promise<{ ok: boolean; message?: string }> {
+    if (generating) return { ok: false, message: "already generating" };
+    const wordsTotal = store.totalWords();
+    const existing = store.getProfile();
+    if (!force && !isProfileDue(wordsTotal, existing?.wordsAt ?? null)) return { ok: false, message: "not due" };
+    if (wordsTotal === 0) return { ok: false, message: "nothing dictated yet" };
+    const { primaryHostId } = await bb.sdk.system.config();
+    if (primaryHostId === null) return { ok: false, message: "no primary host" };
+    generating = true;
+    try {
+      const report = buildUsageReport(store.usageRows(), new Date());
+      const texts = store.recentTexts(SAMPLE_CLIPS);
+      const top = topWords(texts, 10);
+      const persona = await host.call("profile", { sample: sampleTexts(texts), stats: statsSummary(report, top) }, { hostId: primaryHostId });
+      if (!persona.ok) return { ok: false, message: "the model returned no profile" };
+      store.setProfile({
+        generatedAt: Date.now(),
+        wordsAt: wordsTotal,
+        title: persona.title,
+        description: persona.description,
+        catchphrase: persona.catchphrase,
+        peakTitle: report.peak?.label ?? "No peak time yet",
+        peakDescription: persona.peakDescription,
+        mostUsedWord: top[0]?.word ?? null,
+        mostCorrectedWord: mostCorrectedWord(store.recentPairs(300)),
+      });
+      bb.realtime.publish("voice-profile", { generatedAt: Date.now() });
+      return { ok: true };
+    } finally {
+      generating = false;
+    }
+  }
+
   bb.rpc.register(insightsRpcContract, {
     insights_usage: () => buildUsageReport(store.usageRows(), new Date()),
     insights_clear: () => {
       store.clear();
       bb.realtime.publish("voice-clip", { words: 0, day: "" });
+      bb.realtime.publish("voice-profile", { generatedAt: 0 });
       return { ok: true as const };
     },
+    insights_voice: () => {
+      const wordsTotal = store.totalWords();
+      const profile = store.getProfile();
+      return {
+        profile: profile === null ? null : { ...profile },
+        wordsTotal,
+        wordsUntilNext: profile === null && wordsTotal < FIRST_PROFILE_WORDS ? wordsUntilNext(wordsTotal, null) : wordsUntilNext(wordsTotal, profile?.wordsAt ?? null),
+        generating,
+      };
+    },
+    insights_regenerate: async () => {
+      const result = await generateProfile(true);
+      return result.message === undefined ? { ok: result.ok } : { ok: result.ok, message: result.message };
+    },
+  });
+
+  bb.background.schedule("profile", "*/10 * * * *", async () => {
+    const result = await generateProfile(false);
+    if (!result.ok && result.message !== "not due") bb.log.warn(`voice profile: ${result.message ?? "failed"}`);
   });
 
   // Content categories are filled in lazily so the transcription path stays fast.

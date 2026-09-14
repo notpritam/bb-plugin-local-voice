@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, editDistance, fillerCount, tokenize, topWords, wordEdits } from "./text";
+import { countWords, editDistance, fillerCount, mostCorrectedWord, tokenize, topWords, wordEdits } from "./text";
 
 describe("tokenize / countWords", () => {
   it("splits on non-word characters, keeps inner apostrophes, lower-cases", () => {
@@ -39,5 +39,17 @@ describe("topWords", () => {
       { word: "deploy", count: 4 },
       { word: "bug", count: 1 },
     ]);
+  });
+});
+
+describe("mostCorrectedWord", () => {
+  it("is the raw token most often dropped or changed by polishing", () => {
+    const pairs = [
+      { rawText: "like um we should like go", text: "We should go." },
+      { rawText: "like this one", text: "This one." },
+      { rawText: "keep everything", text: "Keep everything." },
+    ];
+    expect(mostCorrectedWord(pairs)).toBe("like");
+    expect(mostCorrectedWord([{ rawText: "same", text: "Same." }])).toBeNull();
   });
 });

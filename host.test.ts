@@ -16,6 +16,11 @@ vi.mock("./classify", async (importOriginal) => {
   return { ...original, classifyFetch: (...args: Parameters<typeof fetch>) => harnessFetch(...args) };
 });
 
+vi.mock("./profile", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./profile")>();
+  return { ...original, profileFetch: (...args: Parameters<typeof fetch>) => harnessFetch(...args) };
+});
+
 const { default: hostEntry } = await import("./host");
 const { hostSignals } = await import("./contract");
 
@@ -148,5 +153,18 @@ describe("classify", () => {
     }) as unknown as typeof fetch);
     const result = await harness.experimental_call("classify", { texts: ["commit and push this", "buy milk", "garbage"] });
     expect(result).toEqual({ labels: ["code", "note", null] });
+  });
+});
+
+describe("profile", () => {
+  it("returns the model's JSON persona", async () => {
+    harnessFetch.mockImplementation((async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ title: "Context Clarifier", description: "You dictate plans.", catchphrase: "commit and push this", peakDescription: "Late nights." }) } }] }))) as unknown as typeof fetch);
+    const result = await harness.experimental_call("profile", { sample: ["commit and push this", "refactor the user service"], stats: "Peak: Monday at 9 p.m." });
+    expect(result).toEqual({ ok: true, title: "Context Clarifier", description: "You dictate plans.", catchphrase: "commit and push this", peakDescription: "Late nights." });
+  });
+  it("reports failure instead of throwing", async () => {
+    harnessFetch.mockImplementation((async () => new Response("nope", { status: 500 })) as unknown as typeof fetch);
+    expect(await harness.experimental_call("profile", { sample: ["x"], stats: "" })).toEqual({ ok: false });
   });
 });
