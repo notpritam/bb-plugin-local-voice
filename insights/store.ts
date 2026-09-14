@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { Category } from "../contract.js";
 import type { NewClip, Surface } from "./clip.js";
+import type { MemberTotal, ReportDay } from "./leaderboard.js";
 export type { NewClip } from "./clip.js";
 
 export interface UsageRow {
@@ -127,6 +128,61 @@ export class InsightsStore {
            peak_description = excluded.peak_description, most_used_word = excluded.most_used_word, most_corrected_word = excluded.most_corrected_word`,
       )
       .run(profile);
+  }
+
+  dailyTotalsSince(day: string): ReportDay[] {
+    return this.db
+      .prepare("SELECT day, SUM(words) AS words, COUNT(*) AS clips FROM clips WHERE day >= ? GROUP BY day ORDER BY day ASC")
+      .all(day) as ReportDay[];
+  }
+
+  // ---- leaderboard (public host side)
+  lbJoin(m: { id: string; displayName: string; tokenHash: string; now: number; ipHash: string | null }): void {
+    this.db
+      .prepare("INSERT INTO lb_members (id, display_name, token_hash, created_at, last_seen, ip_hash) VALUES (@id, @displayName, @tokenHash, @now, @now, @ipHash)")
+      .run(m);
+  }
+
+  lbVerify(memberId: string, tokenHash: string): boolean {
+    const row = this.db.prepare("SELECT token_hash FROM lb_members WHERE id = ?").get(memberId) as { token_hash: string } | undefined;
+    return row !== undefined && row.token_hash === tokenHash;
+  }
+
+  lbRename(memberId: string, displayName: string): void {
+    this.db.prepare("UPDATE lb_members SET display_name = ? WHERE id = ?").run(displayName, memberId);
+  }
+
+  lbUpsertDays(memberId: string, days: readonly ReportDay[], now: number): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO lb_daily (member_id, day, words, clips, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(member_id, day) DO UPDATE SET words = excluded.words, clips = excluded.clips, updated_at = excluded.updated_at`,
+    );
+    const touch = this.db.prepare("UPDATE lb_members SET last_seen = ? WHERE id = ?");
+    this.db.transaction(() => {
+      for (const d of days) upsert.run(memberId, d.day, d.words, d.clips, now);
+      touch.run(now, memberId);
+    })();
+  }
+
+  /** Words per member within [start, end] (inclusive days), or all time when null. */
+  lbTotals(range: { start: string; end: string } | null): MemberTotal[] {
+    const sql =
+      range === null
+        ? "SELECT m.id AS memberId, m.display_name AS displayName, COALESCE(SUM(d.words), 0) AS words FROM lb_members m LEFT JOIN lb_daily d ON d.member_id = m.id GROUP BY m.id ORDER BY m.id"
+        : "SELECT m.id AS memberId, m.display_name AS displayName, COALESCE(SUM(d.words), 0) AS words FROM lb_members m LEFT JOIN lb_daily d ON d.member_id = m.id AND d.day >= ? AND d.day <= ? GROUP BY m.id ORDER BY m.id";
+    const stmt = this.db.prepare(sql);
+    return (range === null ? stmt.all() : stmt.all(range.start, range.end)) as MemberTotal[];
+  }
+
+  lbMemberCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM lb_members").get() as { n: number }).n;
+  }
+
+  lbLeave(memberId: string): void {
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM lb_daily WHERE member_id = ?").run(memberId);
+      this.db.prepare("DELETE FROM lb_members WHERE id = ?").run(memberId);
+    })();
   }
 
   count(): number {

@@ -54,3 +54,34 @@ describe("profile + samples", () => {
     expect(store.totalWords()).toBe(3);
   });
 });
+
+describe("leaderboard store", () => {
+  it("joins, verifies, upserts days, ranks by period, leaves", () => {
+    store.lbJoin({ id: "aaaa", displayName: "Ann", tokenHash: "h1", now: 1, ipHash: null });
+    store.lbJoin({ id: "bbbb", displayName: "Bob", tokenHash: "h2", now: 1, ipHash: null });
+    expect(store.lbVerify("aaaa", "h1")).toBe(true);
+    expect(store.lbVerify("aaaa", "nope")).toBe(false);
+    expect(store.lbVerify("zzzz", "h1")).toBe(false);
+    store.lbUpsertDays("aaaa", [{ day: "2026-09-14", words: 100, clips: 2 }, { day: "2026-09-08", words: 500, clips: 5 }], 10);
+    store.lbUpsertDays("bbbb", [{ day: "2026-09-15", words: 300, clips: 3 }], 10);
+    store.lbUpsertDays("aaaa", [{ day: "2026-09-14", words: 150, clips: 3 }], 11); // upsert replaces
+    expect(store.lbTotals({ start: "2026-09-14", end: "2026-09-20" })).toEqual([
+      { memberId: "aaaa", displayName: "Ann", words: 150 },
+      { memberId: "bbbb", displayName: "Bob", words: 300 },
+    ]);
+    expect(store.lbTotals(null)).toEqual([
+      { memberId: "aaaa", displayName: "Ann", words: 650 },
+      { memberId: "bbbb", displayName: "Bob", words: 300 },
+    ]);
+    expect(store.lbMemberCount()).toBe(2);
+    store.lbLeave("aaaa");
+    expect(store.lbMemberCount()).toBe(1);
+    expect(store.lbTotals(null)).toEqual([{ memberId: "bbbb", displayName: "Bob", words: 300 }]);
+  });
+  it("daily totals for the client report", () => {
+    store.insertClip(clip({ day: "2026-09-14", words: 10 }));
+    store.insertClip(clip({ day: "2026-09-14", words: 5 }));
+    store.insertClip(clip({ day: "2026-09-15", words: 7 }));
+    expect(store.dailyTotalsSince("2026-09-14")).toEqual([{ day: "2026-09-14", words: 15, clips: 2 }, { day: "2026-09-15", words: 7, clips: 1 }]);
+  });
+});
