@@ -12,7 +12,8 @@ export function pickMimeType(isSupported: (mimeType: string) => boolean): string
 export function fileNameFor(mimeType: string): string {
   const base = mimeType.split(";")[0] ?? "";
   const ext = base.includes("ogg") ? "ogg" : base.includes("mp4") ? "mp4" : "webm";
-  return `recording.${ext}`;
+  // `bb-dock.*` lets the host tell dock clips from bb's own composer (`recording.*`).
+  return `bb-dock.${ext}`;
 }
 
 export function isVoiceSupported(win: Window = window): boolean {

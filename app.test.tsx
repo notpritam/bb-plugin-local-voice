@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { loadPluginApp, mountPluginContentScripts } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, mountPluginContentScripts, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 import { DOCK_ATTR } from "./voice-dock";
 
@@ -22,5 +22,45 @@ describe("app", () => {
     expect(document.querySelectorAll(`[${DOCK_ATTR}]`)).toHaveLength(1);
     await scripts.lifecycle.dispose();
     expect(document.querySelector(`[${DOCK_ATTR}]`)).toBeNull();
+  });
+});
+
+const report = {
+  totals: { words: 12345, clips: 40, durationMs: 3_600_000, books: 0.1 },
+  month: { words: 5000, previousWords: 4000, deltaPct: 25 },
+  wpm: { value: 152, topPercent: 10 },
+  fixes: { edits: 321, fillers: 88, translated: 7 },
+  surfaces: [
+    { key: "composer", label: "Agent prompts (composer)", clips: 30, share: 75 },
+    { key: "field", label: "Other fields", clips: 10, share: 25 },
+    { key: "cli", label: "CLI", clips: 0, share: 0 },
+    { key: "other", label: "Other", clips: 0, share: 0 },
+  ],
+  categories: [
+    { key: "prompt", label: "AI prompts", clips: 30, share: 75 },
+    { key: "note", label: "Notes & plans", clips: 10, share: 25 },
+    { key: "message", label: "Messages", clips: 0, share: 0 },
+    { key: "code", label: "Code instructions", clips: 0, share: 0 },
+    { key: "other", label: "Other", clips: 0, share: 0 },
+  ],
+  languages: [{ language: "English", clips: 33, share: 82 }, { language: "Hindi", clips: 7, share: 18 }],
+  streak: { current: 3, longest: 9 },
+  heatmap: { start: "2026-04-05", weeks: 24, days: Array.from({ length: 168 }, (_, i) => ({ day: `d${i}`, words: i % 5, level: i % 5 })) },
+  peak: { weekday: 4, hour: 0, label: "Thursday at 12 a.m." },
+  generatedAt: 0,
+};
+
+describe("Voice page", () => {
+  it("registers the nav panel and renders the usage report", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    expect(app.navPanels.map((p) => ({ id: p.id, path: p.path }))).toEqual([{ id: "voice", path: "voice" }]);
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }) } });
+    await slot.findByText("12,345");
+    await slot.findByText("152");
+    expect(slot.getByText(/Top 10%/)).toBeTruthy();
+    expect(slot.getByText(/321/)).toBeTruthy();
+    expect(slot.getByText(/3 day streak/)).toBeTruthy();
+    expect(slot.getByText(/Thursday at 12 a.m./)).toBeTruthy();
+    slot.lifecycle.unmount();
   });
 });

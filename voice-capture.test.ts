@@ -12,10 +12,10 @@ describe("pickMimeType", () => {
 
 describe("fileNameFor", () => {
   it("derives the extension from the container", () => {
-    expect(fileNameFor("audio/webm;codecs=opus")).toBe("recording.webm");
-    expect(fileNameFor("audio/mp4")).toBe("recording.mp4");
-    expect(fileNameFor("audio/ogg")).toBe("recording.ogg");
-    expect(fileNameFor("")).toBe("recording.webm");
+    expect(fileNameFor("audio/webm;codecs=opus")).toBe("bb-dock.webm");
+    expect(fileNameFor("audio/mp4")).toBe("bb-dock.mp4");
+    expect(fileNameFor("audio/ogg")).toBe("bb-dock.ogg");
+    expect(fileNameFor("")).toBe("bb-dock.webm");
   });
 });
 
