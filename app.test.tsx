@@ -64,3 +64,20 @@ describe("Voice page", () => {
     slot.lifecycle.unmount();
   });
 });
+
+describe("Your voice tab", () => {
+  it("renders the persona and the words-until-next bar", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const voice = {
+      profile: { generatedAt: 1, title: "Context Clarifier", description: "You dictate plans.", catchphrase: "commit and push this", peakTitle: "Thursday at 12 a.m.", peakDescription: "Late nights.", mostUsedWord: "deploy", mostCorrectedWord: "like" },
+      wordsTotal: 3200, wordsUntilNext: 800, generating: false,
+    };
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), insights_voice: () => voice, insights_regenerate: () => ({ ok: true }) } });
+    (await slot.findByText("Your voice")).click();
+    await slot.findByText("Context Clarifier");
+    expect(slot.getByText(/commit and push this/)).toBeTruthy();
+    expect(slot.getByText(/deploy/)).toBeTruthy();
+    expect(slot.getByText(/800 more words/)).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+});

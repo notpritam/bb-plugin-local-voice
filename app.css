@@ -80,3 +80,14 @@
 .bbv-cell-2 { fill: color-mix(in srgb, var(--primary, #0f766e) 55%, transparent); }
 .bbv-cell-3 { fill: color-mix(in srgb, var(--primary, #0f766e) 80%, transparent); }
 .bbv-cell-4 { fill: var(--primary, #0f766e); }
+.bbv-progress { height: 8px; border-radius: 999px; background: var(--muted, #e5e7eb); overflow: hidden; }
+.bbv-progress-fill { height: 100%; background: var(--primary, #0f766e); border-radius: 999px; transition: width .3s ease; }
+.bbv-progress-meta { display: flex; justify-content: space-between; font-size: 12px; margin: 8px 0 20px; }
+.bbv-progress-meta .bbv-link { font-size: 12px; padding: 0; }
+.bbv-hero { margin-bottom: 16px; }
+.bbv-serif { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -0.01em; margin: 0; }
+h2.bbv-serif { font-size: 28px; }
+.bbv-quote { font-size: 24px; font-style: italic; margin-bottom: 4px; }
+.bbv-hero-text { font-size: 16px; margin: 12px 0 0; max-width: 60ch; }
+.bbv-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.bbv-stack { display: grid; gap: 16px; align-content: start; }
