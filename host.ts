@@ -4,7 +4,8 @@ import path from "node:path";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { experimental_aiServicesHostContract } from "@get-bb/plugin-sdk/ai-services";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { LOCAL_VOICE_SERVICE_ID, serverHostContract, whisperConfigSchema, type WhisperConfig } from "./contract.js";
+import { classifyFetch, classifyText } from "./classify.js";
+import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, whisperConfigSchema, type Category, type WhisperConfig } from "./contract.js";
 import { runCommand, transcribeAudio } from "./transcribe.js";
 import { DEFAULT_CONFIG, failure } from "./whisper.js";
 
@@ -33,10 +34,19 @@ async function writeConfig(dataDir: string, config: WhisperConfig): Promise<void
 
 export default experimental_defineHostEntry({
   contract: hostContract,
+  experimental_signals: hostSignals,
   handlers: {
     configure: async (config, context) => {
       await writeConfig(context.experimental_paths.dataDir, config);
       return { ok: true as const };
+    },
+    classify: async ({ texts }, context) => {
+      const config = await readConfig(context.experimental_paths.dataDir);
+      const labels: (Category | null)[] = [];
+      for (const text of texts) {
+        labels.push(await classifyText({ text, serverUrl: config.serverUrl, model: config.polishModel, signal: context.signal, fetchImpl: classifyFetch }));
+      }
+      return { labels };
     },
     "ai.inference.complete": async (input) =>
       failure(
@@ -49,7 +59,7 @@ export default experimental_defineHostEntry({
       }
       const config = await readConfig(context.experimental_paths.dataDir);
       try {
-        return await transcribeAudio(
+        const result = await transcribeAudio(
           {
             model: input.model,
             audioBase64: input.audioBase64,
@@ -65,6 +75,30 @@ export default experimental_defineHostEntry({
             signal: context.signal,
           },
         );
+        if (!result.ok) return result;
+        if (result.text !== "") {
+          const { details } = result;
+          try {
+            await context.experimental_emitSignal("clip", {
+              at: Date.now(),
+              filename: input.filename,
+              mimeType: input.mimeType,
+              language: details.language,
+              durationMs: details.durationMs,
+              rawText: details.rawText,
+              text: result.text,
+              polished: details.polished,
+              translated: details.translated,
+              asrMs: details.asrMs,
+              polishMs: details.polishMs,
+              engine: details.engine,
+              model: input.model,
+            });
+          } catch {
+            // Insights are best-effort; never fail the transcription over them.
+          }
+        }
+        return { ok: true as const, model: result.model, text: result.text };
       } catch (error) {
         return failure("request_failed", error instanceof Error ? error.message : String(error));
       }

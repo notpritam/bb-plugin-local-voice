@@ -10,10 +10,17 @@ vi.mock("./transcribe", async (importOriginal) => {
   return { ...original, transcribeAudio };
 });
 
+const harnessFetch = vi.fn<typeof fetch>();
+vi.mock("./classify", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./classify")>();
+  return { ...original, classifyFetch: (...args: Parameters<typeof fetch>) => harnessFetch(...args) };
+});
+
 const { default: hostEntry } = await import("./host");
+const { hostSignals } = await import("./contract");
 
 let root: string;
-let harness: ReturnType<typeof experimental_createHostEntryHarness<typeof hostEntry.contract, {}>>;
+let harness: ReturnType<typeof experimental_createHostEntryHarness<typeof hostEntry.contract, typeof hostSignals>>;
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "bbw-host-"));
   harness = experimental_createHostEntryHarness(hostEntry, {
@@ -95,5 +102,51 @@ describe("ai.inference.complete", () => {
       timeoutMs: 1000,
     });
     expect(result).toMatchObject({ ok: false, code: "request_failed" });
+  });
+});
+
+describe("clip signal", () => {
+  it("emits one clip after a successful non-empty transcription", async () => {
+    transcribeAudio.mockResolvedValue({
+      ok: true,
+      model: "qwen3-asr",
+      text: "Hello.",
+      details: { rawText: "hello", language: "English", polished: true, translated: false, durationMs: 1500, asrMs: 900, polishMs: 400, engine: "llama" },
+    });
+    const result = await harness.experimental_call("ai.voice.transcribe", { ...voiceInput, filename: "bb-dock.webm" });
+    expect(result).toEqual({ ok: true, model: "qwen3-asr", text: "Hello." }); // details never leak to bb
+    const signals = harness.experimental_getSignals();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      signal: "clip",
+      payload: {
+        filename: "bb-dock.webm", mimeType: "audio/webm", language: "English", durationMs: 1500, rawText: "hello", text: "Hello.",
+        polished: true, translated: false, asrMs: 900, polishMs: 400, engine: "llama", model: "qwen3-asr",
+      },
+    });
+    expect(typeof (signals[0]!.payload as { at: number }).at).toBe("number");
+  });
+  it("does not emit for silence or failures", async () => {
+    transcribeAudio.mockResolvedValueOnce({
+      ok: true, model: "qwen3-asr", text: "",
+      details: { rawText: "", language: null, polished: false, translated: false, durationMs: 800, asrMs: null, polishMs: null, engine: "llama" },
+    });
+    await harness.experimental_call("ai.voice.transcribe", voiceInput);
+    transcribeAudio.mockResolvedValueOnce({ ok: false, code: "timeout", message: "slow" });
+    await harness.experimental_call("ai.voice.transcribe", voiceInput);
+    expect(harness.experimental_getSignals()).toHaveLength(0);
+  });
+});
+
+describe("classify", () => {
+  it("asks the polisher model for one label per text and tolerates bad answers", async () => {
+    harnessFetch.mockImplementation((async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+      const text = body.messages.at(-1)!.content;
+      const label = text.includes("commit") ? "code" : text.includes("garbage") ? "banana" : "note";
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ category: label }) } }] }));
+    }) as unknown as typeof fetch);
+    const result = await harness.experimental_call("classify", { texts: ["commit and push this", "buy milk", "garbage"] });
+    expect(result).toEqual({ labels: ["code", "note", null] });
   });
 });
