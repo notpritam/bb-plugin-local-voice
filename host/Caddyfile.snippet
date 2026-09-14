@@ -1,0 +1,14 @@
+# Publishes only the leaderboard routes of the Local Voice plugin from a bb server on this host.
+# bb serves plugin routes registered with auth:"none" without a session; everything else in bb stays private.
+voice.example.com {
+	encode zstd gzip
+	@leaderboard path /api/v1/plugins/local-voice/http/leaderboard/*
+	handle @leaderboard {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+	handle {
+		respond "Local Voice leaderboard host. See https://github.com/notpritam/bb-plugin-local-voice" 404
+	}
+}
