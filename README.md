@@ -1,5 +1,7 @@
 # Local Voice — local dictation for bb, with insights and a leaderboard
 
+**Product page and live leaderboard:** [voice.notpritam.in](https://voice.notpritam.in) · **Portfolio:** [notpritam.in/plugins/local-voice](https://notpritam.in/plugins/local-voice) · **Marketplace:** `local-voice@notpritam`
+
 Speak into any text box in [bb](https://getbb.app) and get clean, written text back — recognised and polished entirely on your own machine, in any language, out as English.
 
 - **Recognition:** Qwen3-ASR-1.7B (Alibaba, Apache-2.0) via `llama-server`. Hindi, Hinglish, English and 50+ languages; character-perfect on code-switched speech where Whisper stumbles.
@@ -70,6 +72,10 @@ The plugin *is* the leaderboard server: routes under `/api/v1/plugins/local-voic
 ## How a clip flows
 
 ffmpeg → 16 kHz wav → silence gate (−50 dBFS) → `POST /v1/audio/transcriptions` (Qwen3-ASR, warm) → `POST /v1/chat/completions` (Gemma, MTP speculative decoding, thinking off) → text; the host emits a `clip` event that the server records for Insights. Polishing is skipped when fewer than 1.5 s of bb's budget remain and any polish failure returns the raw transcript.
+
+## Landing site
+
+`site/` is the static page served at https://voice.notpritam.in by the same Caddy block that publishes the leaderboard routes (`host/Caddyfile.snippet`). Deploy with `rsync -a --delete site/ /var/www/local-voice/`. It loads no third-party scripts or fonts and renders the live board from the same origin.
 
 ## Development
 

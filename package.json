@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-local-voice",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "engines": {
     "bb": ">=0.41",
@@ -60,5 +60,11 @@
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
     "esbuild@0.28.2": true
-  }
+  },
+  "homepage": "https://voice.notpritam.in",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/notpritam/bb-plugin-local-voice.git"
+  },
+  "license": "MIT"
 }
