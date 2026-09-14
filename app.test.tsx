@@ -81,3 +81,29 @@ describe("Your voice tab", () => {
     slot.lifecycle.unmount();
   });
 });
+
+describe("Leaderboard tab", () => {
+  it("renders the podium, table, and join state", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const members = [
+      { rank: 1, memberId: "m1", displayName: "Ishan Kumar", words: 9000, delta: 0 },
+      { rank: 2, memberId: "m2", displayName: "Ankur Sinha", words: 8000, delta: 3 },
+      { rank: 3, memberId: "m3", displayName: "Debayan P", words: 700, delta: null },
+      { rank: 4, memberId: "me", displayName: "Pritam Sharma", words: 703, delta: 9 },
+    ];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+      rpc: {
+        insights_usage: () => report, insights_clear: () => ({ ok: true }),
+        leaderboard_status: () => ({ enabled: true, joined: true, memberId: "me", displayName: "Pritam Sharma", url: "https://x", lastReportAt: null, lastError: null }),
+        leaderboard_board: () => ({ period: "week", total: 4, offset: 0, members, me: members[3] }),
+        leaderboard_join: () => ({ ok: true }), leaderboard_leave: () => ({ ok: true }),
+      },
+    });
+    (await slot.findByText("Leaderboard")).click();
+    expect(await slot.findAllByText("Ishan Kumar")).toHaveLength(2); // podium + table
+    expect(slot.getByText(/Pritam Sharma \(you\)/)).toBeTruthy();
+    expect(slot.getByText("↑9")).toBeTruthy();
+    expect(slot.getByText(/1-4 of 4/)).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+});
