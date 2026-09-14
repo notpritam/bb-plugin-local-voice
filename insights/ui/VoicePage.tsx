@@ -14,7 +14,10 @@ export function VoicePage(_props: PluginNavPanelProps) {
   return (
     <div className="bbv-page">
       <header className="bbv-header">
-        <h1>Insights</h1>
+        <div>
+          <h1>Insights</h1>
+          <p className="bbv-header-copy">Everything you dictate through Local Voice, counted and read back to you. Nothing here leaves this machine.</p>
+        </div>
         <button
           type="button"
           className="bbv-link"

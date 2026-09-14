@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Local Voice — dictation for bb that runs on your own machine</title>
+  <meta name="description" content="Speak into any text box in bb. Qwen3-ASR and Gemma 4 turn Hindi, Hinglish or English into clean written English — on your machine, in about three seconds. Insights, a voice profile and a public leaderboard included." />
+  <link rel="canonical" href="https://voice.notpritam.in/" />
+  <meta property="og:title" content="Local Voice — dictation for bb that runs on your own machine" />
+  <meta property="og:description" content="Any language in. Clean English out. Nothing leaves the box." />
+  <meta property="og:image" content="https://voice.notpritam.in/assets/og.png" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="theme-color" content="#f3f5f7" />
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/assets/fonts/fonts.css" />
+  <link rel="stylesheet" href="/assets/site.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/" aria-label="Local Voice">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg>
+      <span>Local Voice</span>
+    </a>
+    <nav class="top-nav" aria-label="Site">
+      <a href="#how">How it works</a>
+      <a href="#leaderboard">Leaderboard</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/notpritam/bb-plugin-local-voice">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <h1>Talk to your agents. Any language in, clean English out, nothing leaves the box.</h1>
+        <p class="lede">Local Voice is a dictation plugin for <a href="https://getbb.app">bb</a>. It puts a microphone on every text field, recognises speech with Qwen3-ASR, tidies it up with Gemma 4, and inserts written text at your cursor. Both models run on the machine that runs bb.</p>
+        <div class="cta">
+          <a class="button button-primary" href="#install">Install in bb</a>
+          <a class="button" href="#leaderboard">See who's dictating</a>
+        </div>
+        <p class="hero-facts">Measured on a 20-core CPU with no GPU: an eight-second Hinglish take comes back as English in about three seconds.</p>
+      </div>
+
+      <figure class="demo" aria-label="A dictation being recognised and polished">
+        <div class="demo-bar">
+          <span class="rec" aria-hidden="true"></span>
+          <span class="demo-time" id="demo-time">00:00</span>
+          <span class="meter" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </span>
+          <span class="demo-state" id="demo-state">Recording</span>
+        </div>
+        <div class="demo-body">
+          <p class="demo-raw" id="demo-raw" aria-label="What was said"></p>
+          <p class="demo-out" id="demo-out"></p>
+        </div>
+        <figcaption>What was said, and what landed in the text box.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" id="how">
+      <h2>How a clip travels</h2>
+      <ol class="steps">
+        <li>
+          <h3>Record</h3>
+          <p>Click the mic in bb's composer, or focus any other field and press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>. The browser records; the clip goes to your bb host.</p>
+        </li>
+        <li>
+          <h3>Recognise</h3>
+          <p>Qwen3-ASR 1.7B, kept warm by llama.cpp, transcribes the speech in its own language. Hindi, Hinglish and English are all first-class; silence is dropped instead of hallucinated.</p>
+        </li>
+        <li>
+          <h3>Polish</h3>
+          <p>Gemma 4 E4B rewrites it like a transcriptionist: fillers and false starts out, punctuation and lists in, <code>dot t s x</code> becomes <code>.tsx</code>, identifiers stay as spoken, and non-English is rendered in English.</p>
+        </li>
+        <li>
+          <h3>Insert</h3>
+          <p>The text appears at your caret. It never types over a selection, and it adds the space you would have typed.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="section" id="what">
+      <h2>What comes with it</h2>
+      <div class="features">
+        <div>
+          <h3>A mic on every field</h3>
+          <p>bb's composer already has one. Local Voice docks a second, smaller mic to settings fields, plugin panels, search boxes and any other place you can type.</p>
+        </div>
+        <div>
+          <h3>Insights</h3>
+          <p>Words dictated, speaking speed, how much the polisher fixed, what you tend to dictate about, streaks, and a heatmap of every day you spoke.</p>
+        </div>
+        <div>
+          <h3>A voice profile</h3>
+          <p>After a couple of hundred words the local model writes a short persona from what you actually say, with your catchphrase and the word you correct most.</p>
+        </div>
+        <div>
+          <h3>A public leaderboard</h3>
+          <p>Opt in with a display name and your install posts daily word counts. Only counts and the name; no audio, no text, ever.</p>
+        </div>
+        <div>
+          <h3>Private by construction</h3>
+          <p>Audio, transcripts and the profile live in your bb's own database. Clear history deletes them. Leaving the leaderboard deletes your rows there too.</p>
+        </div>
+        <div>
+          <h3>Open and swappable</h3>
+          <p>Apache-2.0 models served through an OpenAI-compatible router. Prefer whisper.cpp? Set <code>BB_TRANSCRIPTION=local/whisper-small</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section shots">
+      <figure><img src="/assets/usage.webp" width="1120" height="900" alt="The Usage tab: words per minute, fixes made while polishing, total words, categories, streak heatmap." loading="lazy" /><figcaption>Your usage</figcaption></figure>
+      <figure><img src="/assets/voice.webp" width="1120" height="900" alt="The Your voice tab with a generated persona, catchphrase, most used and most corrected word, and peak time." loading="lazy" /><figcaption>Your voice</figcaption></figure>
+      <figure><img src="/assets/leaderboard.webp" width="1120" height="900" alt="The Leaderboard tab with a podium and a ranked table." loading="lazy" /><figcaption>Leaderboard</figcaption></figure>
+    </section>
+
+    <section class="section" id="leaderboard">
+      <div class="board-head">
+        <h2>This week's board</h2>
+        <p id="board-meta" class="muted">Live from this host.</p>
+      </div>
+      <div id="board" class="board" aria-live="polite">
+        <p class="muted">Loading…</p>
+      </div>
+      <p class="muted board-foot">Ranks reset each ISO week. Everyone on the board opted in from their own bb.</p>
+    </section>
+
+    <section class="section" id="install">
+      <h2>Install</h2>
+      <p>On the machine that runs your bb host. Arch Linux is automated; elsewhere, install <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> and ffmpeg first. Budget about 5 GB for the models.</p>
+      <pre><code>git clone https://github.com/notpritam/bb-plugin-local-voice.git
+cd bb-plugin-local-voice &amp;&amp; npm install
+./host/setup.sh
+bb plugin install .
+bb-app config set BB_TRANSCRIPTION local/qwen3-asr</code></pre>
+      <p>Or from the marketplace, then run <code>host/setup.sh</code> from the installed plugin directory:</p>
+      <pre><code>bb marketplace add git:github.com/notpritam/bb-marketplace@main
+bb plugin install local-voice@notpritam</code></pre>
+      <p>Hard-refresh the bb app afterwards. The <strong>Voice</strong> page appears in the sidebar and the mic appears on every field.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Made by <a href="https://notpritam.in">Pritam Sharma</a>. Source on <a href="https://github.com/notpritam/bb-plugin-local-voice">GitHub</a>, listed in the <a href="https://github.com/notpritam/bb-marketplace">notpritam marketplace</a> and on <a href="https://notpritam.in/plugins/local-voice">notpritam.in</a>.</p>
+    <p class="muted">Qwen3-ASR by Alibaba, Gemma 4 by Google, served with llama.cpp. This page loads no third-party scripts or fonts.</p>
+  </footer>
+
+  <script src="/assets/site.js" defer></script>
+</body>
+</html>
