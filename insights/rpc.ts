@@ -39,6 +39,33 @@ export const voiceReportSchema = z.object({
 });
 export type VoiceReportDto = z.infer<typeof voiceReportSchema>;
 
+const rankedMember = z.object({ rank: z.number(), memberId: z.string(), displayName: z.string(), words: z.number(), delta: z.number().nullable() });
+export const boardPageSchema = z.object({
+  period: z.enum(["week", "all"]),
+  total: z.number(),
+  offset: z.number(),
+  members: z.array(rankedMember),
+  me: rankedMember.nullable(),
+});
+export type BoardPageDto = z.infer<typeof boardPageSchema>;
+export const leaderboardStatusSchema = z.object({
+  enabled: z.boolean(),
+  joined: z.boolean(),
+  memberId: z.string().nullable(),
+  displayName: z.string(),
+  url: z.string(),
+  lastReportAt: z.number().nullable(),
+  lastError: z.string().nullable(),
+});
+export type LeaderboardStatusDto = z.infer<typeof leaderboardStatusSchema>;
+
+export const leaderboardRpcContract = defineRpcContract({
+  leaderboard_status: { input: z.null(), output: leaderboardStatusSchema },
+  leaderboard_join: { input: z.null(), output: z.object({ ok: z.boolean(), memberId: z.string().optional(), message: z.string().optional() }).strict() },
+  leaderboard_leave: { input: z.null(), output: z.object({ ok: z.boolean(), message: z.string().optional() }).strict() },
+  leaderboard_board: { input: z.object({ period: z.enum(["week", "all"]), offset: z.number().int().min(0) }).strict(), output: boardPageSchema },
+});
+
 export const insightsRpcContract = defineRpcContract({
   insights_usage: { input: z.null(), output: usageReportSchema },
   insights_clear: { input: z.null(), output: z.object({ ok: z.literal(true) }).strict() },
