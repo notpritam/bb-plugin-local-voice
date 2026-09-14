@@ -84,13 +84,46 @@ describe("insertTextAtCursor", () => {
     insertTextAtCursor(input, "b");
     expect(input.value).toBe("a b");
   });
-  it("replaces a selection", () => {
+  it("never replaces a selection: a fully selected input (tab-focus) gets the text appended", () => {
+    const input = el("input");
+    input.value = "http://127.0.0.1:8091";
+    input.focus();
+    input.select();
+    insertTextAtCursor(input, "hello");
+    expect(input.value).toBe("http://127.0.0.1:8091 hello");
+    expect(input.selectionStart).toBe(input.value.length);
+  });
+  it("collapses a partial selection to its end instead of deleting it", () => {
     const area = el("textarea");
-    area.value = "keep DROP end";
+    area.value = "keep this end";
     area.focus();
-    area.setSelectionRange(5, 9);
+    area.setSelectionRange(5, 9); // "this"
     insertTextAtCursor(area, "NEW");
-    expect(area.value).toBe("keep NEW end");
+    expect(area.value).toBe("keep this NEW end");
+  });
+  it("adds a trailing space when inserting in front of a word", () => {
+    const area = el("textarea");
+    area.value = "hello world";
+    area.focus();
+    area.setSelectionRange(0, 0);
+    insertTextAtCursor(area, "well");
+    expect(area.value).toBe("well hello world");
+    area.setSelectionRange(5, 5); // between "well " and "hello": before 'h', after ' '
+    insertTextAtCursor(area, "then");
+    expect(area.value).toBe("well then hello world");
+  });
+  it("collapses a contenteditable selection to its end before inserting", () => {
+    const box = el("div", { contenteditable: "true" });
+    box.textContent = "alpha beta";
+    box.focus();
+    const range = document.createRange();
+    range.setStart(box.firstChild!, 0);
+    range.setEnd(box.firstChild!, 5); // "alpha"
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    insertTextAtCursor(box, "gamma");
+    expect(box.textContent).toBe("alpha gamma beta");
   });
   it("prefers document.execCommand when the browser supports it", () => {
     const area = el("textarea");

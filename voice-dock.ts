@@ -51,23 +51,42 @@ function isFormField(node: HTMLElement): node is HTMLTextAreaElement | HTMLInput
   return node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement;
 }
 
-function needsLeadingSpace(target: HTMLElement, doc: Document): boolean {
+/** Characters adjacent to the caret, so the insert can pad itself with spaces. */
+function caretNeighbours(target: HTMLElement, doc: Document): { before: string | undefined; after: string | undefined } {
   if (isFormField(target)) {
     const caret = target.selectionStart ?? target.value.length;
-    const previous = target.value[caret - 1];
-    return previous !== undefined && !/\s/.test(previous);
+    return { before: target.value[caret - 1], after: target.value[caret] };
   }
   const selection = doc.getSelection();
   if (selection !== null && selection.rangeCount > 0 && target.contains(selection.anchorNode)) {
     const anchor = selection.anchorNode;
     if (anchor !== null && anchor.nodeType === Node.TEXT_NODE) {
-      const previous = anchor.textContent?.[selection.anchorOffset - 1];
-      return previous !== undefined && !/\s/.test(previous);
+      const text = anchor.textContent ?? "";
+      return { before: text[selection.anchorOffset - 1], after: text[selection.anchorOffset] };
     }
-    return false;
+    return { before: undefined, after: undefined };
   }
   const text = target.textContent ?? "";
-  return text.length > 0 && !/\s/.test(text[text.length - 1]!);
+  return { before: text[text.length - 1], after: undefined };
+}
+
+const isWord = (ch: string | undefined): boolean => ch !== undefined && !/\s/.test(ch);
+
+/**
+ * Dictation appends; it never types over a selection. Tab-focusing an input
+ * selects its whole value, so an insert-at-selection would wipe the field.
+ * Collapse any selection to its end first.
+ */
+function collapseSelectionToEnd(target: HTMLElement, doc: Document): void {
+  if (isFormField(target)) {
+    const end = target.selectionEnd ?? target.value.length;
+    target.setSelectionRange(end, end);
+    return;
+  }
+  const selection = doc.getSelection();
+  if (selection !== null && selection.rangeCount > 0 && !selection.isCollapsed && target.contains(selection.anchorNode)) {
+    selection.collapseToEnd();
+  }
 }
 
 /** Set a form field's value through the prototype setter so React's tracker sees it. */
@@ -80,15 +99,16 @@ function setNativeValue(field: HTMLTextAreaElement | HTMLInputElement, value: st
 export function insertTextAtCursor(target: HTMLElement, text: string): void {
   const doc = target.ownerDocument;
   target.focus();
-  const spaced = needsLeadingSpace(target, doc) ? ` ${text}` : text;
+  collapseSelectionToEnd(target, doc);
+  const { before, after } = caretNeighbours(target, doc);
+  const spaced = `${isWord(before) ? " " : ""}${text}${isWord(after) ? " " : ""}`;
   const exec = (doc as Document & { execCommand?: (command: string, ui: boolean, value: string) => boolean })
     .execCommand;
   if (typeof exec === "function" && exec.call(doc, "insertText", false, spaced)) return;
 
   if (isFormField(target)) {
     const start = target.selectionStart ?? target.value.length;
-    const end = target.selectionEnd ?? start;
-    setNativeValue(target, target.value.slice(0, start) + spaced + target.value.slice(end));
+    setNativeValue(target, target.value.slice(0, start) + spaced + target.value.slice(start));
     const caret = start + spaced.length;
     target.setSelectionRange(caret, caret);
     target.dispatchEvent(new Event("input", { bubbles: true }));
@@ -99,7 +119,6 @@ export function insertTextAtCursor(target: HTMLElement, text: string): void {
   const node = doc.createTextNode(spaced);
   if (selection !== null && selection.rangeCount > 0 && target.contains(selection.anchorNode)) {
     const range = selection.getRangeAt(0);
-    range.deleteContents();
     range.insertNode(node);
     range.setStartAfter(node);
     range.collapse(true);
