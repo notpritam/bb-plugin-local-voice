@@ -72,6 +72,18 @@ describe("transcribeAudio", () => {
     await expect(readdir(seenDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("never lets a wav upload collide with the converted wav", async () => {
+    const paths: string[] = [];
+    const run = vi.fn<Runner>(async (cmd, args) => {
+      if (cmd === "ffmpeg") paths.push(args[args.indexOf("-i") + 1]!, args[args.length - 1]!);
+      return ok("x");
+    });
+    await transcribeAudio(request({ mimeType: "audio/wav" }), deps(run));
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).not.toBe(paths[1]);
+    expect(paths[0]!.endsWith(".wav")).toBe(true);
+  });
+
   it("expands ~ in modelsDir", async () => {
     await mkdir(path.join(root, "home-models"));
     await writeFile(path.join(root, "home-models", "ggml-small.bin"), "m");

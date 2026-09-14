@@ -128,7 +128,7 @@ export async function transcribeAudio(
   const workDir = await mkdtemp(path.join(deps.tempRoot, "bb-whisper-"));
   try {
     const input = path.join(workDir, `in.${audioExtensionFor(req.mimeType)}`);
-    const wav = path.join(workDir, "in.wav");
+    const wav = path.join(workDir, "pcm16k.wav");
     await writeFile(input, Buffer.from(req.audioBase64, "base64"));
 
     const ffmpeg = await deps.run("ffmpeg", buildFfmpegArgs(input, wav), {
