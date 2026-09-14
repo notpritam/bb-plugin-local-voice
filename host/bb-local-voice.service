@@ -1,0 +1,12 @@
+[Unit]
+Description=llama-server router for bb Local Voice (Qwen3-ASR + Gemma 4)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/llama-server --models-preset /home/pritam/.bb/local-voice/models.ini --host 127.0.0.1 --port 8091 --models-max 3
+Restart=always
+RestartSec=5
+Environment=LLAMA_CACHE=/home/pritam/.bb/local-voice/cache
+
+[Install]
+WantedBy=default.target

@@ -5,6 +5,8 @@ export const DEFAULT_CONFIG: WhisperConfig = {
   modelsDir: "~/.bb/whisper-models",
   threads: 12,
   translate: true,
+  serverUrl: "http://127.0.0.1:8091",
+  translateModel: "gemma-4-e2b",
 };
 export const MODEL_DOWNLOAD_BASE =
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -34,11 +36,14 @@ export function configFromSettings(values: {
   modelsDir?: unknown;
   threads?: unknown;
   translate?: unknown;
+  serverUrl?: unknown;
+  translateModel?: unknown;
 }): WhisperConfig {
-  const modelsDir =
-    typeof values.modelsDir === "string" && values.modelsDir.trim() !== ""
-      ? values.modelsDir.trim()
-      : DEFAULT_CONFIG.modelsDir;
+  const str = (value: unknown, fallback: string) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
+  const modelsDir = str(values.modelsDir, DEFAULT_CONFIG.modelsDir);
+  const serverUrl = str(values.serverUrl, DEFAULT_CONFIG.serverUrl).replace(/\/+$/u, "");
+  const translateModel = str(values.translateModel, DEFAULT_CONFIG.translateModel);
   const parsedThreads =
     typeof values.threads === "string" ? Number.parseInt(values.threads, 10) : Number.NaN;
   const threads = Number.isFinite(parsedThreads)
@@ -46,7 +51,7 @@ export function configFromSettings(values: {
     : DEFAULT_CONFIG.threads;
   const translate =
     typeof values.translate === "boolean" ? values.translate : DEFAULT_CONFIG.translate;
-  return { modelsDir, threads, translate };
+  return { modelsDir, threads, translate, serverUrl, translateModel };
 }
 
 export function expandHome(p: string, homeDir: string): string {

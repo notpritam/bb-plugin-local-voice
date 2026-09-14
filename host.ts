@@ -4,7 +4,7 @@ import path from "node:path";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { experimental_aiServicesHostContract } from "@get-bb/plugin-sdk/ai-services";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { WHISPER_SERVICE_ID, serverHostContract, whisperConfigSchema, type WhisperConfig } from "./contract.js";
+import { LOCAL_VOICE_SERVICE_ID, serverHostContract, whisperConfigSchema, type WhisperConfig } from "./contract.js";
 import { runCommand, transcribeAudio } from "./transcribe.js";
 import { DEFAULT_CONFIG, failure } from "./whisper.js";
 
@@ -41,10 +41,10 @@ export default experimental_defineHostEntry({
     "ai.inference.complete": async (input) =>
       failure(
         "request_failed",
-        `Whisper serves voice transcription only; "${input.serviceId}" offers no inference.`,
+        `Local Voice serves voice transcription only; "${input.serviceId}" offers no inference.`,
       ),
     "ai.voice.transcribe": async (input, context) => {
-      if (input.serviceId !== WHISPER_SERVICE_ID) {
+      if (input.serviceId !== LOCAL_VOICE_SERVICE_ID) {
         return failure("request_failed", `This plugin serves no AI service "${input.serviceId}".`);
       }
       const config = await readConfig(context.experimental_paths.dataDir);

@@ -5,7 +5,7 @@ import plugin from "./server";
 function makeHost(overrides: { primaryHostId?: string | null } = {}) {
   const callHostRpc = vi.fn(async () => ({ ok: true }));
   const { bb, harness } = createFakePluginHost({
-    pluginId: "whisper",
+    pluginId: "local-voice",
     experimental_hostEntry: true,
     sdk: {
       system: {
@@ -31,7 +31,7 @@ describe("server", () => {
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
     expect(harness.inspection.registrations.aiServiceRegistrations).toEqual([
-      { id: "whisper", displayName: "Whisper (local whisper.cpp on this host)", kinds: ["voice"] },
+      { id: "local", displayName: "Local Voice (Qwen3-ASR + Gemma on this host)", kinds: ["voice"] },
     ]);
   });
 
@@ -44,7 +44,7 @@ describe("server", () => {
     expect(harness.inspection.experimental_hostRpcCalls[0]).toMatchObject({
       method: "configure",
       hostId: "host-1",
-      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true },
+      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" },
     });
     service.controller.abort();
     await service.done;
@@ -54,11 +54,11 @@ describe("server", () => {
     const { bb, harness, callHostRpc } = makeHost();
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
-    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false });
+    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false, serverUrl: "http://10.0.0.2:9000/", translateModel: " gemma-4-e4b " });
     await vi.waitFor(() => expect(callHostRpc).toHaveBeenCalled());
     expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({
       method: "configure",
-      input: { modelsDir: "/opt/models", threads: 6, translate: false },
+      input: { modelsDir: "/opt/models", threads: 6, translate: false, serverUrl: "http://10.0.0.2:9000", translateModel: "gemma-4-e4b" },
     });
   });
 

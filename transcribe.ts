@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WhisperConfig } from "./contract.js";
+import { selectEngine, transcribeWithLlama } from "./engine.js";
 import {
   MODEL_DOWNLOAD_BASE,
   SILENCE_DBFS,
@@ -90,6 +91,7 @@ export interface TranscribeDeps {
   tempRoot: string;
   run: Runner;
   signal: AbortSignal;
+  fetchImpl?: typeof fetch;
 }
 export type TranscribeResult = { ok: true; model: string; text: string } | AiServiceFailure;
 
@@ -111,16 +113,21 @@ export async function transcribeAudio(
   req: TranscribeRequest,
   deps: TranscribeDeps,
 ): Promise<TranscribeResult> {
-  const modelsDir = expandHome(deps.config.modelsDir, deps.homeDir);
-  const model = resolveModelPath(req.model, modelsDir);
-  if (!model.ok) return model;
-  try {
-    await access(model.path);
-  } catch {
-    return failure(
-      "service_unavailable",
-      `Whisper model not found at ${model.path}. Download it with: curl -L -o "${model.path}" ${MODEL_DOWNLOAD_BASE}ggml-${req.model}.bin`,
-    );
+  const engine = selectEngine(req.model);
+  let whisperModelPath: string | null = null;
+  if (engine.kind === "whisper") {
+    const modelsDir = expandHome(deps.config.modelsDir, deps.homeDir);
+    const model = resolveModelPath(engine.model, modelsDir);
+    if (!model.ok) return model;
+    try {
+      await access(model.path);
+    } catch {
+      return failure(
+        "service_unavailable",
+        `Whisper model not found at ${model.path}. Download it with: curl -L -o "${model.path}" ${MODEL_DOWNLOAD_BASE}ggml-${engine.model}.bin`,
+      );
+    }
+    whisperModelPath = model.path;
   }
 
   const startedAt = Date.now();
@@ -140,17 +147,32 @@ export async function transcribeAudio(
     const ffmpegFailure = stepFailure("ffmpeg", ffmpeg);
     if (ffmpegFailure) return ffmpegFailure;
 
-    // Whisper hallucinates ("you", "Thank you.") on silence; skip it outright.
-    // Best-effort: an unreadable wav is left for whisper-cli to complain about.
-    const level = wavRmsDb(await readFile(wav).catch(() => Buffer.alloc(0)));
+    // Speech models hallucinate ("you", "Thank you.") on silence; skip them outright.
+    // Best-effort: an unreadable wav is left for the engine to complain about.
+    const wavBytes = await readFile(wav).catch(() => Buffer.alloc(0));
+    const level = wavRmsDb(wavBytes);
     if (level !== null && level < SILENCE_DBFS) {
       return { ok: true, model: req.model, text: "" };
+    }
+
+    if (engine.kind === "llama") {
+      const result = await transcribeWithLlama({
+        wav: wavBytes,
+        model: engine.model,
+        serverUrl: deps.config.serverUrl,
+        translate: deps.config.translate,
+        translateModel: deps.config.translateModel,
+        remainingMs: remaining,
+        signal: deps.signal,
+        ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+      });
+      return result.ok ? { ok: true, model: req.model, text: result.text } : result;
     }
 
     const whisper = await deps.run(
       "whisper-cli",
       buildWhisperArgs({
-        modelPath: model.path,
+        modelPath: whisperModelPath!,
         wavPath: wav,
         threads: deps.config.threads,
         translate: deps.config.translate,

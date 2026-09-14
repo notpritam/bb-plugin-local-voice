@@ -27,8 +27,8 @@ afterEach(async () => {
 });
 
 const voiceInput = {
-  serviceId: "whisper",
-  model: "small",
+  serviceId: "local",
+  model: "qwen3-asr",
   audioBase64: "AAAA",
   mimeType: "audio/webm",
   filename: "recording.webm",
@@ -38,7 +38,7 @@ const voiceInput = {
 
 describe("configure", () => {
   it("persists the config to <dataDir>/config.json", async () => {
-    const config = { modelsDir: "/models", threads: 6, translate: false };
+    const config = { modelsDir: "/models", threads: 6, translate: false, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" };
     await expect(harness.experimental_call("configure", config)).resolves.toEqual({ ok: true });
     expect(JSON.parse(await readFile(path.join(root, "data", "config.json"), "utf8"))).toEqual(config);
   });
@@ -52,21 +52,21 @@ describe("ai.voice.transcribe", () => {
   });
 
   it("uses defaults when nothing was configured", async () => {
-    transcribeAudio.mockResolvedValue({ ok: true, model: "small", text: "hello" });
+    transcribeAudio.mockResolvedValue({ ok: true, model: "qwen3-asr", text: "hello" });
     const result = await harness.experimental_call("ai.voice.transcribe", voiceInput);
-    expect(result).toEqual({ ok: true, model: "small", text: "hello" });
+    expect(result).toEqual({ ok: true, model: "qwen3-asr", text: "hello" });
     const [request, deps] = transcribeAudio.mock.calls[0]!;
-    expect(request).toEqual({ model: "small", audioBase64: "AAAA", mimeType: "audio/webm", prompt: null, timeoutMs: 10_000 });
-    expect(deps.config).toEqual({ modelsDir: "~/.bb/whisper-models", threads: 12, translate: true });
+    expect(request).toEqual({ model: "qwen3-asr", audioBase64: "AAAA", mimeType: "audio/webm", prompt: null, timeoutMs: 10_000 });
+    expect(deps.config).toEqual({ modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" });
     expect(deps.tempRoot).toBe(path.join(root, "tmp"));
     expect(deps.homeDir).toBe(os.homedir());
   });
 
   it("uses the persisted config on later calls", async () => {
-    await harness.experimental_call("configure", { modelsDir: "/m", threads: 2, translate: false });
-    transcribeAudio.mockResolvedValue({ ok: true, model: "small", text: "" });
+    await harness.experimental_call("configure", { modelsDir: "/m", threads: 2, translate: false, serverUrl: "http://x:1", translateModel: "t" });
+    transcribeAudio.mockResolvedValue({ ok: true, model: "qwen3-asr", text: "" });
     await harness.experimental_call("ai.voice.transcribe", voiceInput);
-    expect(transcribeAudio.mock.calls[0]![1].config).toEqual({ modelsDir: "/m", threads: 2, translate: false });
+    expect(transcribeAudio.mock.calls[0]![1].config).toEqual({ modelsDir: "/m", threads: 2, translate: false, serverUrl: "http://x:1", translateModel: "t" });
   });
 
   it("passes failures through unchanged", async () => {
@@ -87,8 +87,8 @@ describe("ai.voice.transcribe", () => {
 describe("ai.inference.complete", () => {
   it("is not offered", async () => {
     const result = await harness.experimental_call("ai.inference.complete", {
-      serviceId: "whisper",
-      model: "small",
+      serviceId: "local",
+      model: "qwen3-asr",
       reasoningEffort: "none",
       prompt: "hi",
       outputSchema: { type: "object" },
