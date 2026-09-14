@@ -9,15 +9,20 @@ export default async function plugin(bb: BbPluginApi) {
       label: "llama-server router URL (bb-local-voice.service)",
       default: DEFAULT_CONFIG.serverUrl,
     },
+    polish: {
+      type: "boolean",
+      label: "Polish dictation (fillers out, punctuation, lists, identifiers)",
+      default: DEFAULT_CONFIG.polish,
+    },
     translate: {
       type: "boolean",
-      label: "Translate non-English speech to English (off = transcribe in the spoken language)",
+      label: "Output English (off = keep the spoken language)",
       default: DEFAULT_CONFIG.translate,
     },
-    translateModel: {
+    polishModel: {
       type: "string",
-      label: "Translation model alias on the router",
-      default: DEFAULT_CONFIG.translateModel,
+      label: "Polisher model alias on the router",
+      default: DEFAULT_CONFIG.polishModel,
     },
     modelsDir: {
       type: "string",

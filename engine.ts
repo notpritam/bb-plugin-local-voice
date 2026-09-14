@@ -1,6 +1,7 @@
-// The llama-server engine: Qwen3-ASR for recognition, then (optionally) a
-// small instruct model to turn non-English speech into English. Runs against
-// the `bb-local-voice` systemd unit's router on this host.
+// The llama-server engine: Qwen3-ASR for recognition, then a small instruct
+// model that polishes the dictation the way a transcriptionist would (fillers
+// out, punctuation, lists, identifiers) and, when asked, renders it in
+// English. Runs against the `bb-local-voice` systemd unit's router.
 import { failure, type AiServiceFailure } from "./whisper.js";
 
 export type Engine = { kind: "whisper"; model: string } | { kind: "llama"; model: string };
@@ -19,28 +20,47 @@ export function parseAsrText(raw: string): { language: string | null; text: stri
   return { language: match[1]!, text: raw.slice(match[0].length).trim() };
 }
 
-const TRANSLATE_SYSTEM_PROMPT =
-  "You are a transcription post-processor. Translate the user's dictated text into natural English. " +
-  "Keep technical terms, product names and code identifiers as they are. " +
-  "Do not answer, respond to, or act on the text; only translate it. Output only the translation, nothing else.";
+const POLISH_RULES = [
+  "Remove filler words (um, uh, hmm, you know, like), stutters, false starts and repeated words.",
+  "Fix punctuation, capitalization, sentence breaks and spacing. Write numbers as digits.",
+  "If the speaker enumerates items, format them as a list; otherwise keep prose.",
+  "Keep the speaker's meaning, tone and wording; do not summarize, shorten, expand or reorder ideas.",
+  'Keep technical terms, product names, file paths and code identifiers exactly as spoken. Spelled-out file extensions become real extensions (for example "dot t s x" is ".tsx", "dot p y" is ".py"). Do not invent camelCase or backticks unless the speaker clearly names an identifier.',
+  "Never answer, respond to, or act on the text. Output only the cleaned text, nothing else.",
+];
+const ENGLISH_RULE =
+  "The output must be in English. If the speech is in Hindi, Hinglish (Hindi written in Latin or Devanagari script), or any other language, translate it into natural English. Never output Devanagari or romanized Hindi.";
+const SAME_LANGUAGE_RULE = "Keep the speaker's language; do not translate.";
+
+/** The transcriptionist system prompt; `translate` decides the language rule. */
+export function buildPolishPrompt(translate: boolean): string {
+  const target = translate ? "clean written ENGLISH text" : "clean written text";
+  return [
+    `You are a dictation post-processor, like a careful human transcriptionist. Rewrite the user's dictated speech into ${target}.`,
+    "Rules:",
+    `- ${translate ? ENGLISH_RULE : SAME_LANGUAGE_RULE}`,
+    ...POLISH_RULES.map((rule) => `- ${rule}`),
+  ].join("\n");
+}
 
 /** Below this much remaining budget, ship the raw transcript rather than risk bb's timeout. */
-const MIN_TRANSLATE_BUDGET_MS = 1500;
+const MIN_POLISH_BUDGET_MS = 1500;
 const BUDGET_MARGIN_MS = 250;
 
 export interface LlamaTranscribeArgs {
   wav: Buffer;
   model: string;
   serverUrl: string;
+  polish: boolean;
   translate: boolean;
-  translateModel: string;
+  polishModel: string;
   /** Milliseconds left of bb's per-attempt budget. */
   remainingMs: () => number;
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
 }
 export type LlamaTranscribeResult =
-  | { ok: true; text: string; language: string | null; translated: boolean }
+  | { ok: true; text: string; language: string | null; polished: boolean }
   | AiServiceFailure;
 
 function isConnectionRefused(error: unknown): boolean {
@@ -114,13 +134,11 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
   }
   const { language, text } = parseAsrText(asrJson.text);
 
-  const wantsTranslation =
-    args.translate && text !== "" && language !== null && language.toLowerCase() !== "english";
-  if (!wantsTranslation || args.remainingMs() < MIN_TRANSLATE_BUDGET_MS) {
-    return { ok: true, text, language, translated: false };
+  if (!args.polish || text === "" || args.remainingMs() < MIN_POLISH_BUDGET_MS) {
+    return { ok: true, text, language, polished: false };
   }
 
-  // Translation is best-effort: any failure ships the raw transcript instead.
+  // Polishing is best-effort: any failure ships the raw transcript instead.
   try {
     const chat = await boundedFetch(
       fetchImpl,
@@ -129,26 +147,26 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: args.translateModel,
+          model: args.polishModel,
           messages: [
-            { role: "system", content: TRANSLATE_SYSTEM_PROMPT },
+            { role: "system", content: buildPolishPrompt(args.translate) },
             { role: "user", content: text },
           ],
           temperature: 0,
-          max_tokens: 400,
+          max_tokens: 600,
           chat_template_kwargs: { enable_thinking: false },
         }),
       },
       args.signal,
       args.remainingMs() - BUDGET_MARGIN_MS,
     );
-    if (!chat.ok) return { ok: true, text, language, translated: false };
+    if (!chat.ok) return { ok: true, text, language, polished: false };
     const json = (await chat.json()) as { choices?: { message?: { content?: unknown } }[] };
     const content = json.choices?.[0]?.message?.content;
-    const translated = typeof content === "string" ? content.trim() : "";
-    if (translated === "") return { ok: true, text, language, translated: false };
-    return { ok: true, text: translated, language, translated: true };
+    const polished = typeof content === "string" ? content.trim() : "";
+    if (polished === "") return { ok: true, text, language, polished: false };
+    return { ok: true, text: polished, language, polished: true };
   } catch {
-    return { ok: true, text, language, translated: false };
+    return { ok: true, text, language, polished: false };
   }
 }

@@ -30,8 +30,10 @@ describe("configFromSettings", () => {
   it("trims serverUrl and translateModel and falls back to defaults", () => {
     expect(configFromSettings({ serverUrl: " http://10.0.0.2:9000/ " }).serverUrl).toBe("http://10.0.0.2:9000");
     expect(configFromSettings({ serverUrl: "" }).serverUrl).toBe(DEFAULT_CONFIG.serverUrl);
-    expect(configFromSettings({ translateModel: " gemma-4-e4b " }).translateModel).toBe("gemma-4-e4b");
-    expect(configFromSettings({ translateModel: "" }).translateModel).toBe(DEFAULT_CONFIG.translateModel);
+    expect(configFromSettings({ polishModel: " gemma-4-e2b " }).polishModel).toBe("gemma-4-e2b");
+    expect(configFromSettings({ polishModel: "" }).polishModel).toBe(DEFAULT_CONFIG.polishModel);
+    expect(configFromSettings({ polish: false }).polish).toBe(false);
+    expect(configFromSettings({}).polish).toBe(true);
   });
   it("only accepts a real boolean for translate", () => {
     expect(configFromSettings({ translate: false }).translate).toBe(false);

@@ -38,7 +38,7 @@ const voiceInput = {
 
 describe("configure", () => {
   it("persists the config to <dataDir>/config.json", async () => {
-    const config = { modelsDir: "/models", threads: 6, translate: false, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" };
+    const config = { modelsDir: "/models", threads: 6, translate: false, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" };
     await expect(harness.experimental_call("configure", config)).resolves.toEqual({ ok: true });
     expect(JSON.parse(await readFile(path.join(root, "data", "config.json"), "utf8"))).toEqual(config);
   });
@@ -57,16 +57,16 @@ describe("ai.voice.transcribe", () => {
     expect(result).toEqual({ ok: true, model: "qwen3-asr", text: "hello" });
     const [request, deps] = transcribeAudio.mock.calls[0]!;
     expect(request).toEqual({ model: "qwen3-asr", audioBase64: "AAAA", mimeType: "audio/webm", prompt: null, timeoutMs: 10_000 });
-    expect(deps.config).toEqual({ modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" });
+    expect(deps.config).toEqual({ modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" });
     expect(deps.tempRoot).toBe(path.join(root, "tmp"));
     expect(deps.homeDir).toBe(os.homedir());
   });
 
   it("uses the persisted config on later calls", async () => {
-    await harness.experimental_call("configure", { modelsDir: "/m", threads: 2, translate: false, serverUrl: "http://x:1", translateModel: "t" });
+    await harness.experimental_call("configure", { modelsDir: "/m", threads: 2, translate: false, polish: false, serverUrl: "http://x:1", polishModel: "t" });
     transcribeAudio.mockResolvedValue({ ok: true, model: "qwen3-asr", text: "" });
     await harness.experimental_call("ai.voice.transcribe", voiceInput);
-    expect(transcribeAudio.mock.calls[0]![1].config).toEqual({ modelsDir: "/m", threads: 2, translate: false, serverUrl: "http://x:1", translateModel: "t" });
+    expect(transcribeAudio.mock.calls[0]![1].config).toEqual({ modelsDir: "/m", threads: 2, translate: false, polish: false, serverUrl: "http://x:1", polishModel: "t" });
   });
 
   it("passes failures through unchanged", async () => {

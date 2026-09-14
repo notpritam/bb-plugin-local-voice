@@ -44,7 +44,7 @@ describe("server", () => {
     expect(harness.inspection.experimental_hostRpcCalls[0]).toMatchObject({
       method: "configure",
       hostId: "host-1",
-      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" },
+      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" },
     });
     service.controller.abort();
     await service.done;
@@ -54,11 +54,11 @@ describe("server", () => {
     const { bb, harness, callHostRpc } = makeHost();
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
-    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false, serverUrl: "http://10.0.0.2:9000/", translateModel: " gemma-4-e4b " });
+    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false, polish: false, serverUrl: "http://10.0.0.2:9000/", polishModel: " gemma-4-e2b " });
     await vi.waitFor(() => expect(callHostRpc).toHaveBeenCalled());
     expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({
       method: "configure",
-      input: { modelsDir: "/opt/models", threads: 6, translate: false, serverUrl: "http://10.0.0.2:9000", translateModel: "gemma-4-e4b" },
+      input: { modelsDir: "/opt/models", threads: 6, translate: false, polish: false, serverUrl: "http://10.0.0.2:9000", polishModel: "gemma-4-e2b" },
     });
   });
 

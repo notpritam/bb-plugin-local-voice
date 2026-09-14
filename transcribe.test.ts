@@ -21,7 +21,7 @@ afterEach(async () => {
 
 function deps(run: Runner, overrides: Partial<Parameters<typeof transcribeAudio>[1]> = {}) {
   return {
-    config: { modelsDir, threads: 4, translate: true, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" },
+    config: { modelsDir, threads: 4, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" },
     homeDir: root,
     tempRoot: path.join(root, "tmp"),
     run,
@@ -90,7 +90,7 @@ describe("transcribeAudio", () => {
     const run = vi.fn<Runner>(async () => ok("x"));
     const result = await transcribeAudio(
       request(),
-      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, serverUrl: "http://127.0.0.1:8091", translateModel: "gemma-4-e2b" } }),
+      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" } }),
     );
     expect(result.ok).toBe(true);
     expect(run.mock.calls[1]![1]).toContain(path.join(root, "home-models", "ggml-small.bin"));

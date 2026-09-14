@@ -10,12 +10,14 @@ export const whisperConfigSchema = z
     modelsDir: z.string().min(1),
     /** whisper-cli thread count. */
     threads: z.number().int().min(1).max(64),
-    /** Turn non-English speech into English (Gemma step). */
+    /** Polisher outputs English (translating when needed); off keeps the spoken language. */
     translate: z.boolean(),
-    /** llama-server router serving the ASR and translation models. */
+    /** Run the polisher (fillers, punctuation, lists, identifiers) on every clip. */
+    polish: z.boolean(),
+    /** llama-server router serving the ASR and polisher models. */
     serverUrl: z.string().min(1),
-    /** Router alias of the translation model. */
-    translateModel: z.string().min(1),
+    /** Router alias of the polisher model. */
+    polishModel: z.string().min(1),
   })
   .strict();
 export type WhisperConfig = z.infer<typeof whisperConfigSchema>;
