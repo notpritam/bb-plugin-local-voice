@@ -60,7 +60,16 @@ export interface LlamaTranscribeArgs {
   fetchImpl?: typeof fetch;
 }
 export type LlamaTranscribeResult =
-  | { ok: true; text: string; language: string | null; polished: boolean }
+  | {
+      ok: true;
+      text: string;
+      rawText: string;
+      language: string | null;
+      polished: boolean;
+      translated: boolean;
+      asrMs: number;
+      polishMs: number | null;
+    }
   | AiServiceFailure;
 
 function isConnectionRefused(error: unknown): boolean {
@@ -121,6 +130,7 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
   form.set("file", new Blob([new Uint8Array(args.wav)], { type: "audio/wav" }), "audio.wav");
   form.set("model", args.model);
   form.set("response_format", "json");
+  const asrStarted = Date.now();
   let asr: Response;
   try {
     asr = await boundedFetch(fetchImpl, `${base}/v1/audio/transcriptions`, { method: "POST", body: form }, args.signal, args.remainingMs() - BUDGET_MARGIN_MS);
@@ -133,12 +143,16 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
     return failure("invalid_response", "Speech recognition returned no text field.");
   }
   const { language, text } = parseAsrText(asrJson.text);
+  const asrMs = Date.now() - asrStarted;
+  const translated = args.translate && language !== null && language.toLowerCase() !== "english";
+  const raw = { ok: true as const, text, rawText: text, language, polished: false, translated: false, asrMs, polishMs: null };
 
   if (!args.polish || text === "" || args.remainingMs() < MIN_POLISH_BUDGET_MS) {
-    return { ok: true, text, language, polished: false };
+    return raw;
   }
 
   // Polishing is best-effort: any failure ships the raw transcript instead.
+  const polishStarted = Date.now();
   try {
     const chat = await boundedFetch(
       fetchImpl,
@@ -160,13 +174,13 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
       args.signal,
       args.remainingMs() - BUDGET_MARGIN_MS,
     );
-    if (!chat.ok) return { ok: true, text, language, polished: false };
+    if (!chat.ok) return raw;
     const json = (await chat.json()) as { choices?: { message?: { content?: unknown } }[] };
     const content = json.choices?.[0]?.message?.content;
     const polished = typeof content === "string" ? content.trim() : "";
-    if (polished === "") return { ok: true, text, language, polished: false };
-    return { ok: true, text: polished, language, polished: true };
+    if (polished === "") return raw;
+    return { ok: true, text: polished, rawText: text, language, polished: true, translated, asrMs, polishMs: Date.now() - polishStarted };
   } catch {
-    return { ok: true, text, language, polished: false };
+    return raw;
   }
 }

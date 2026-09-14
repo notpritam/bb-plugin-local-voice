@@ -46,7 +46,12 @@ describe("transcribeAudio", () => {
       return cmd === "whisper-cli" ? ok("\n [BLANK_AUDIO] Hello there. \n") : ok();
     });
     const result = await transcribeAudio(request(), deps(run));
-    expect(result).toEqual({ ok: true, model: "whisper-small", text: "Hello there." });
+    expect(result).toEqual({
+      ok: true,
+      model: "whisper-small",
+      text: "Hello there.",
+      details: { rawText: "Hello there.", language: null, polished: false, translated: false, durationMs: 0, asrMs: expect.any(Number), polishMs: null, engine: "whisper" },
+    });
     expect(calls.map((c) => c.cmd)).toEqual(["ffmpeg", "whisper-cli"]);
     const ffmpegInput = calls[0]!.args[calls[0]!.args.indexOf("-i") + 1]!;
     expect(ffmpegInput.endsWith("/in.webm")).toBe(true);
@@ -165,13 +170,13 @@ describe("transcribeAudio", () => {
       return ok("you");
     });
     const result = await transcribeAudio(request(), deps(run));
-    expect(result).toEqual({ ok: true, model: "whisper-small", text: "" });
+    expect(result).toMatchObject({ ok: true, model: "whisper-small", text: "" });
     expect(run.mock.calls.map((c) => c[0])).toEqual(["ffmpeg"]);
   });
 
   it("returns an empty transcript for silence", async () => {
     const run = vi.fn<Runner>(async () => ok(" [BLANK_AUDIO]\n"));
-    expect(await transcribeAudio(request(), deps(run))).toEqual({ ok: true, model: "whisper-small", text: "" });
+    expect(await transcribeAudio(request(), deps(run))).toMatchObject({ ok: true, model: "whisper-small", text: "" });
   });
 });
 
@@ -202,14 +207,19 @@ describe("transcribeAudio via llama-server", () => {
       throw new Error("unexpected " + String(url));
     }) as unknown as typeof fetch;
     const result = await transcribeAudio(request({ model: "qwen3-asr" }), deps(ffmpegWritesWav, { fetchImpl }));
-    expect(result).toEqual({ ok: true, model: "qwen3-asr", text: "hi there" });
+    expect(result).toEqual({
+      ok: true,
+      model: "qwen3-asr",
+      text: "hi there",
+      details: { rawText: "hi there", language: "English", polished: false, translated: false, durationMs: 0, asrMs: expect.any(Number), polishMs: null, engine: "llama" },
+    });
     expect(ffmpegWritesWav.mock.calls.map((c) => c[0])).toEqual(["ffmpeg"]);
   });
 
   it("does not require a whisper model file for the llama engine", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "ok" }))) as unknown as typeof fetch;
     const result = await transcribeAudio(request({ model: "qwen3-asr-0.6b" }), deps(ffmpegWritesWav, { fetchImpl }));
-    expect(result).toEqual({ ok: true, model: "qwen3-asr-0.6b", text: "ok" });
+    expect(result).toMatchObject({ ok: true, model: "qwen3-asr-0.6b", text: "ok" });
   });
 
   it("passes llama failures through", async () => {

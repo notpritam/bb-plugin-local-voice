@@ -154,3 +154,18 @@ export function wavRmsDb(buffer: Buffer): number | null {
   }
   return null;
 }
+
+/** Duration of a 16 kHz mono s16le wav from its data chunk; null when not such a wav. */
+export function wavDurationMs(buffer: Buffer): number | null {
+  if (buffer.length < 12 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    return null;
+  }
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString("ascii", offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    if (id === "data") return Math.round(Math.min(size, buffer.length - offset - 8) / 32);
+    offset += 8 + size + (size % 2);
+  }
+  return null;
+}

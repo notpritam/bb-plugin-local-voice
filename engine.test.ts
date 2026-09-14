@@ -57,7 +57,7 @@ describe("transcribeWithLlama", () => {
       chat: () => new Response(JSON.stringify({ choices: [{ message: { content: "Hello." } }] })),
     });
     const result = await transcribeWithLlama(base(fetchImpl));
-    expect(result).toEqual({ ok: true, text: "Hello.", language: "English", polished: true });
+    expect(result).toEqual({ ok: true, text: "Hello.", rawText: "hello", language: "English", polished: true, translated: false, asrMs: expect.any(Number), polishMs: expect.any(Number) });
     expect(calls).toHaveLength(2);
     const form = calls[0]!.body as FormData;
     expect(form.get("model")).toBe("qwen3-asr");
@@ -67,7 +67,7 @@ describe("transcribeWithLlama", () => {
   it("returns the raw transcript when polishing is off", async () => {
     const { fetchImpl, calls } = fakeFetch({});
     const result = await transcribeWithLlama(base(fetchImpl, { polish: false }));
-    expect(result).toEqual({ ok: true, text: "hello", language: "English", polished: false });
+    expect(result).toEqual({ ok: true, text: "hello", rawText: "hello", language: "English", polished: false, translated: false, asrMs: expect.any(Number), polishMs: null });
     expect(calls).toHaveLength(1);
   });
 
@@ -86,7 +86,7 @@ describe("transcribeWithLlama", () => {
       },
     });
     const result = await transcribeWithLlama(base(fetchImpl));
-    expect(result).toEqual({ ok: true, text: "Dude, yesterday", language: "Hindi", polished: true });
+    expect(result).toEqual({ ok: true, text: "Dude, yesterday", rawText: "यार कल", language: "Hindi", polished: true, translated: true, asrMs: expect.any(Number), polishMs: expect.any(Number) });
     expect(calls.map((c) => c.url.split("/v1/")[1])).toEqual(["audio/transcriptions", "chat/completions"]);
   });
 

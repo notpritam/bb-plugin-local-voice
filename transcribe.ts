@@ -14,6 +14,7 @@ import {
   failure,
   lastLine,
   resolveModelPath,
+  wavDurationMs,
   wavRmsDb,
   type AiServiceFailure,
 } from "./whisper.js";
@@ -93,7 +94,19 @@ export interface TranscribeDeps {
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
 }
-export type TranscribeResult = { ok: true; model: string; text: string } | AiServiceFailure;
+export interface TranscribeDetails {
+  rawText: string;
+  language: string | null;
+  polished: boolean;
+  translated: boolean;
+  durationMs: number;
+  asrMs: number | null;
+  polishMs: number | null;
+  engine: "llama" | "whisper";
+}
+export type TranscribeResult =
+  | { ok: true; model: string; text: string; details: TranscribeDetails }
+  | AiServiceFailure;
 
 function stepFailure(tool: string, result: RunResult): AiServiceFailure | null {
   if (result.missing) {
@@ -150,9 +163,15 @@ export async function transcribeAudio(
     // Speech models hallucinate ("you", "Thank you.") on silence; skip them outright.
     // Best-effort: an unreadable wav is left for the engine to complain about.
     const wavBytes = await readFile(wav).catch(() => Buffer.alloc(0));
+    const durationMs = wavDurationMs(wavBytes) ?? 0;
     const level = wavRmsDb(wavBytes);
     if (level !== null && level < SILENCE_DBFS) {
-      return { ok: true, model: req.model, text: "" };
+      return {
+        ok: true,
+        model: req.model,
+        text: "",
+        details: { rawText: "", language: null, polished: false, translated: false, durationMs, asrMs: null, polishMs: null, engine: engine.kind },
+      };
     }
 
     if (engine.kind === "llama") {
@@ -167,9 +186,25 @@ export async function transcribeAudio(
         signal: deps.signal,
         ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
       });
-      return result.ok ? { ok: true, model: req.model, text: result.text } : result;
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        model: req.model,
+        text: result.text,
+        details: {
+          rawText: result.rawText,
+          language: result.language,
+          polished: result.polished,
+          translated: result.translated,
+          durationMs,
+          asrMs: result.asrMs,
+          polishMs: result.polishMs,
+          engine: "llama",
+        },
+      };
     }
 
+    const whisperStarted = Date.now();
     const whisper = await deps.run(
       "whisper-cli",
       buildWhisperArgs({
@@ -184,7 +219,13 @@ export async function transcribeAudio(
     const whisperFailure = stepFailure("whisper-cli", whisper);
     if (whisperFailure) return whisperFailure;
 
-    return { ok: true, model: req.model, text: cleanTranscript(whisper.stdout) };
+    const text = cleanTranscript(whisper.stdout);
+    return {
+      ok: true,
+      model: req.model,
+      text,
+      details: { rawText: text, language: null, polished: false, translated: false, durationMs, asrMs: Date.now() - whisperStarted, polishMs: null, engine: "whisper" },
+    };
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

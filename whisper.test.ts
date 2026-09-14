@@ -10,6 +10,7 @@ import {
   failure,
   lastLine,
   resolveModelPath,
+  wavDurationMs,
   wavRmsDb,
 } from "./whisper";
 
@@ -150,5 +151,16 @@ describe("wavRmsDb", () => {
   });
   it("returns null for something that is not a RIFF wav", () => {
     expect(wavRmsDb(Buffer.from("not a wav file at all"))).toBeNull();
+  });
+});
+
+describe("wavDurationMs", () => {
+  it("derives duration from the data chunk of a 16 kHz mono s16le wav", () => {
+    const data = Buffer.alloc(32000 * 2); // 2 s
+    const header = Buffer.from("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data", "binary");
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(data.length);
+    expect(wavDurationMs(Buffer.concat([header, size, data]))).toBe(2000);
+    expect(wavDurationMs(Buffer.from("nope"))).toBeNull();
   });
 });
