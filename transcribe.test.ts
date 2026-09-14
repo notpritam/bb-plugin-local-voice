@@ -153,6 +153,22 @@ describe("transcribeAudio", () => {
     vi.restoreAllMocks();
   });
 
+  it("skips whisper-cli when the converted wav is silent", async () => {
+    const run = vi.fn<Runner>(async (cmd, args) => {
+      if (cmd === "ffmpeg") {
+        const { writeFile: write } = await import("node:fs/promises");
+        // RIFF wav with 4 zero samples
+        const data = Buffer.alloc(8);
+        const header = Buffer.from("RIFF\x2c\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x08\x00\x00\x00", "binary");
+        await write(args[args.length - 1]!, Buffer.concat([header, data]));
+      }
+      return ok("you");
+    });
+    const result = await transcribeAudio(request(), deps(run));
+    expect(result).toEqual({ ok: true, model: "small", text: "" });
+    expect(run.mock.calls.map((c) => c[0])).toEqual(["ffmpeg"]);
+  });
+
   it("returns an empty transcript for silence", async () => {
     const run = vi.fn<Runner>(async () => ok(" [BLANK_AUDIO]\n"));
     expect(await transcribeAudio(request(), deps(run))).toEqual({ ok: true, model: "small", text: "" });

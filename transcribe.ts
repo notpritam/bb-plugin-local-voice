@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WhisperConfig } from "./contract.js";
 import {
   MODEL_DOWNLOAD_BASE,
+  SILENCE_DBFS,
   audioExtensionFor,
   buildFfmpegArgs,
   buildWhisperArgs,
@@ -12,6 +13,7 @@ import {
   failure,
   lastLine,
   resolveModelPath,
+  wavRmsDb,
   type AiServiceFailure,
 } from "./whisper.js";
 
@@ -137,6 +139,13 @@ export async function transcribeAudio(
     });
     const ffmpegFailure = stepFailure("ffmpeg", ffmpeg);
     if (ffmpegFailure) return ffmpegFailure;
+
+    // Whisper hallucinates ("you", "Thank you.") on silence; skip it outright.
+    // Best-effort: an unreadable wav is left for whisper-cli to complain about.
+    const level = wavRmsDb(await readFile(wav).catch(() => Buffer.alloc(0)));
+    if (level !== null && level < SILENCE_DBFS) {
+      return { ok: true, model: req.model, text: "" };
+    }
 
     const whisper = await deps.run(
       "whisper-cli",

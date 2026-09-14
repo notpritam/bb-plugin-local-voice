@@ -112,3 +112,37 @@ export function lastLine(text: string): string {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
   return lines[lines.length - 1] ?? "";
 }
+
+/** Below this RMS level the clip is treated as silence and whisper-cli is skipped. */
+export const SILENCE_DBFS = -50;
+
+/**
+ * RMS level of a 16-bit PCM RIFF wav in dBFS (0 = full scale, -Infinity =
+ * digital silence). Walks the RIFF chunks so ffmpeg's LIST/INFO metadata does
+ * not get read as samples. Returns null when the buffer is not such a wav.
+ */
+export function wavRmsDb(buffer: Buffer): number | null {
+  if (buffer.length < 12 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    return null;
+  }
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString("ascii", offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === "data") {
+      const end = Math.min(buffer.length, start + size);
+      const samples = Math.floor((end - start) / 2);
+      if (samples === 0) return Number.NEGATIVE_INFINITY;
+      let sum = 0;
+      for (let i = 0; i < samples; i += 1) {
+        const s = buffer.readInt16LE(start + i * 2) / 32768;
+        sum += s * s;
+      }
+      const rms = Math.sqrt(sum / samples);
+      return rms === 0 ? Number.NEGATIVE_INFINITY : 20 * Math.log10(rms);
+    }
+    offset = start + size + (size % 2);
+  }
+  return null;
+}

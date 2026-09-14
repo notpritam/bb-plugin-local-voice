@@ -10,6 +10,7 @@ import {
   failure,
   lastLine,
   resolveModelPath,
+  wavRmsDb,
 } from "./whisper";
 
 describe("configFromSettings", () => {
@@ -112,5 +113,34 @@ describe("misc", () => {
   });
   it("failure builds the contract shape", () => {
     expect(failure("timeout", "slow")).toEqual({ ok: false, code: "timeout", message: "slow" });
+  });
+});
+
+describe("wavRmsDb", () => {
+  function wav(samples: number[], extraChunk = false): Buffer {
+    const data = Buffer.alloc(samples.length * 2);
+    samples.forEach((s, i) => data.writeInt16LE(s, i * 2));
+    const list = extraChunk ? Buffer.concat([Buffer.from("LIST"), u32(4), Buffer.from("INFO")]) : Buffer.alloc(0);
+    const fmt = Buffer.concat([Buffer.from("fmt "), u32(16), Buffer.from([1, 0, 1, 0, 0x80, 0x3e, 0, 0, 0, 0x7d, 0, 0, 2, 0, 16, 0])]);
+    const body = Buffer.concat([Buffer.from("WAVE"), fmt, list, Buffer.from("data"), u32(data.length), data]);
+    return Buffer.concat([Buffer.from("RIFF"), u32(body.length), body]);
+  }
+  function u32(n: number): Buffer {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n);
+    return b;
+  }
+  it("is -Infinity for digital silence and 0 dBFS for full scale", () => {
+    expect(wavRmsDb(wav([0, 0, 0, 0]))).toBe(Number.NEGATIVE_INFINITY);
+    expect(wavRmsDb(wav([32767, -32768, 32767, -32768]))).toBeCloseTo(0, 1);
+  });
+  it("measures a quiet signal in dBFS", () => {
+    expect(wavRmsDb(wav([328, -328, 328, -328]))).toBeCloseTo(-40, 0);
+  });
+  it("skips metadata chunks before the data chunk", () => {
+    expect(wavRmsDb(wav([32767, -32768], true))).toBeCloseTo(0, 1);
+  });
+  it("returns null for something that is not a RIFF wav", () => {
+    expect(wavRmsDb(Buffer.from("not a wav file at all"))).toBeNull();
   });
 });
