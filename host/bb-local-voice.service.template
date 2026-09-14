@@ -1,0 +1,12 @@
+[Unit]
+Description=llama-server router for bb Local Voice (Qwen3-ASR + Gemma 4)
+After=network-online.target
+
+[Service]
+ExecStart=__LLAMA__ --models-preset __DIR__/models.ini --host 127.0.0.1 --port __PORT__ --models-max 3
+Restart=always
+RestartSec=5
+Environment=LLAMA_CACHE=__DIR__/cache
+
+[Install]
+WantedBy=default.target

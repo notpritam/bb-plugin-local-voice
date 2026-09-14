@@ -1,74 +1,46 @@
-# Local Voice — local speech-to-text for bb
+# Local Voice — local dictation for bb, with insights and a leaderboard
 
-Registers a `local` voice-transcription service for bb, served entirely on this
-host: **Qwen3-ASR-1.7B** for recognition (any language, incl. Hindi and
-Hinglish) and **Gemma 4 E4B** as a dictation polisher — fillers and false
-starts out, punctuation, lists, numbers, spelled-out extensions (`dot t s x` →
-`.tsx`), identifiers kept — rendering the result in English by default. Both
-are kept warm by one `llama-server` router (Gemma with MTP speculative
-decoding, ~0.5–1.2 s per clip). whisper.cpp remains as a fallback
-engine. A content script also docks a mic button to every text input in the bb
-app (bb's own composer already has one; this covers the rest).
+Speak into any text box in [bb](https://getbb.app) and get clean, written text back — recognised and polished entirely on your own machine, in any language, out as English.
 
-## Host setup (the machine running bb's primary host daemon)
+- **Recognition:** Qwen3-ASR-1.7B (Alibaba, Apache-2.0) via `llama-server`. Hindi, Hinglish, English and 50+ languages; character-perfect on code-switched speech where Whisper stumbles.
+- **Polish:** Gemma 4 E4B rewrites the dictation like a transcriptionist — fillers and false starts out, punctuation, numbers, lists, spelled-out file extensions (`dot t s x` → `.tsx`), identifiers kept — and renders non-English speech in English (switchable).
+- **Everywhere:** bb's composer mic just works; a small round mic docks to every other text field (Ctrl+Shift+Space).
+- **Insights:** words dictated, WPM, fixes made, categories, streak heatmap, an LLM-written *voice profile*, and a public **leaderboard**.
+- **Private:** audio and text never leave your host. The leaderboard only ever receives `{ day, words, clips }` and a display name.
 
-```sh
-sudo pacman -S llama-cpp whisper-cpp        # Arch; whisper-cpp only for the fallback
-mkdir -p ~/.bb/local-voice && cd ~/.bb/local-voice
-HF=https://huggingface.co
-curl -L -O $HF/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf
-curl -L -O $HF/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
-llama-quantize --allow-requantize Qwen3-ASR-1.7B-Q8_0.gguf Qwen3-ASR-1.7B-Q4_K_M.gguf Q4_K_M
-curl -L -O $HF/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_0.gguf
-curl -L -O $HF/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mtp-gemma-4-E4B-it-Q4_0.gguf
-```
+Measured on a 20-core CPU with no GPU: an 8 s Hinglish clip returns polished English in ~3.3 s; English in ~2.5 s.
 
-`~/.bb/local-voice/models.ini` (router preset) and the user unit
-`~/.config/systemd/user/bb-local-voice.service` are in [`host/`](host/). Then:
+## Install (10 minutes, ~5 GB of models)
+
+On the machine that runs your bb primary host daemon:
 
 ```sh
-cp host/models.ini ~/.bb/local-voice/
-cp host/bb-local-voice.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now bb-local-voice
-curl -s http://127.0.0.1:8091/v1/models      # qwen3-asr + gemma-4-e4b loaded
+git clone https://github.com/notpritam/bb-plugin-local-voice.git
+cd bb-plugin-local-voice && npm install
+./host/setup.sh                                   # installs llama.cpp, downloads models, starts the router (systemd user unit)
+bb plugin install .                               # or: bb marketplace add git:github.com/notpritam/bb-marketplace@main && bb plugin install local-voice@notpritam
+bb-app config set BB_TRANSCRIPTION local/qwen3-asr
+bb voice transcribe some-clip.wav                 # smoke test
 ```
 
-## Install and switch bb to it
+`setup.sh` is idempotent. Arch Linux is automated (`pacman`); on other systems install `llama.cpp` and `ffmpeg` first and re-run. It needs about 5 GB in `~/.bb/local-voice`.
 
-```sh
-bb plugin install path:/home/pritam/personal/extensions/media/bb-plugin-local-voice
-/home/pritam/bb-server/node_modules/.bin/bb-app config set BB_TRANSCRIPTION local/qwen3-asr --data-dir ~/.bb
-bb voice transcribe clip.wav                  # smoke test through bb's own pipeline
-```
+Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mic appears on every text field.
 
-Model segment → engine:
+## Using it
 
-| `BB_TRANSCRIPTION` | engine |
+- **Composer:** click bb's mic, speak, click again. The result is inserted at the cursor.
+- **Any other field:** focus it, press **Ctrl+Shift+Space** (or click the round mic at its corner), speak, press again. Dictation appends after the caret and never types over a selection.
+- **Silence** produces nothing (no hallucinated "you").
+- Keep a single take under ~30 s: bb allows 10 s per transcription attempt.
+
+## Engines (`BB_TRANSCRIPTION`)
+
+| value | engine |
 |---|---|
 | `local/qwen3-asr` | Qwen3-ASR-1.7B Q4_K_M on the router (default) |
-| `local/qwen3-asr-0.6b` | smaller/faster Qwen3-ASR (loads on first use) |
-| `local/whisper-small`, `local/whisper-medium` | whisper.cpp `~/.bb/whisper-models/ggml-<name>.bin` |
-
-## How a clip is handled
-
-1. ffmpeg → 16 kHz mono wav (the browser sends webm/opus).
-2. Silence gate: below −50 dBFS returns `""` without touching a model (speech
-   models hallucinate "you" / "Thank you." on silence).
-3. `POST /v1/audio/transcriptions` on the router; llama.cpp returns
-   `language <X><asr_text><text>` — the prefix gives the detected language.
-4. If `polish` is on and at least 1.5 s of bb's 10 s budget remain:
-   `POST /v1/chat/completions` to the polisher (thinking off, temperature 0)
-   with the transcriptionist prompt; `translate` decides whether the rule is
-   "output English" or "keep the speaker's language". Any failure ships the raw
-   transcript; polishing never turns a good transcript into an error.
-
-Measured on a 20-core Core Ultra 7 (no GPU): 8 s Hinglish clip ≈ 2.4 s ASR +
-0.9 s polish; 11 s English ≈ 1.4 s + 1 s; 34 s mixed ≈ 7.8 s ASR. Keep
-dictation under ~30 s per clip to stay inside bb's 10 s per-attempt budget.
-
-Dictation never types over a selection: the dock collapses any selection to
-its end and appends (Tab-focusing an input selects its whole value, which
-would otherwise be wiped), padding a space on either side as needed.
+| `local/qwen3-asr-0.6b` | smaller/faster ASR (loads on first use) |
+| `local/whisper-small`, `local/whisper-medium` | whisper.cpp fallback (`~/.bb/whisper-models/ggml-<name>.bin`) |
 
 ## Settings (`bb plugin config local-voice`)
 
@@ -77,26 +49,35 @@ would otherwise be wiped), padding a space on either side as needed.
 | `serverUrl` | `http://127.0.0.1:8091` | llama-server router |
 | `polish` | `true` | run the polisher on every clip |
 | `translate` | `true` | polisher outputs English (off = keep the spoken language) |
-| `polishModel` | `gemma-4-e4b` | router alias of the polisher (`gemma-4-e2b` is faster/smaller) |
-| `modelsDir` | `~/.bb/whisper-models` | whisper.cpp fallback models |
-| `threads` | `12` | whisper-cli threads |
+| `polishModel` | `gemma-4-e4b` | router alias of the polisher (`gemma-4-e2b` is faster) |
+| `leaderboard` | `false` | join the public leaderboard |
+| `displayName` | — | name shown on the leaderboard |
+| `leaderboardUrl` | `https://voice.notpritam.in/…/leaderboard` | leaderboard host |
+| `modelsDir`, `threads` | | whisper.cpp fallback |
 
-Settings are pushed to the host worker on load and on change (`config.json` in
-the plugin's host data dir).
+## Insights (sidebar → Voice)
 
-## Using the mic
+- **Your usage** — total words, month-over-month, WPM gauge, fixes made (edits, fillers removed, clips translated), what you dictate (AI prompts / notes / messages / code, labelled by the local model), where (composer / fields / CLI), languages, streaks and a 24-week heatmap, peak time.
+- **Your voice** — after 200 words, and every 2,000 words after that, the local model writes a persona (title, description, catchphrase, peak-time blurb); most-used and most-corrected words are computed locally. *Regenerate* any time.
+- **Leaderboard** — this week (ISO week, with rank deltas) or all time; podium, table, jump-to-me. Opt in with `leaderboard=true` + `displayName`, then **Join**. Every 15 minutes your install posts the last 8 days of daily totals. **Leave** deletes your rows on the host.
 
-- bb's composer mic works as before — it now runs locally.
-- Every other `textarea`, text `input`, or `contenteditable` shows a round mic at
-  its bottom-right while focused. Click to record, click again to transcribe and
-  insert at the caret. **Ctrl+Shift+Space** toggles it from the keyboard.
-- Needs HTTPS (omni.getbb.app is fine) and microphone permission in the browser.
+Everything is stored in the plugin's SQLite on your bb server; **Clear history** wipes clips and the profile.
+
+## Hosting a leaderboard yourself
+
+The plugin *is* the leaderboard server: routes under `/api/v1/plugins/local-voice/http/leaderboard/*` are registered with `auth: "none"`, so the bb server answers them without a session. Publish exactly that path with a reverse proxy — `host/Caddyfile.snippet` shows the Caddy block — and point other installs' `leaderboardUrl` at it. Joins are limited to 10/hour/IP, reports to 60/min/IP; daily counts are capped at 60,000 words.
+
+## How a clip flows
+
+ffmpeg → 16 kHz wav → silence gate (−50 dBFS) → `POST /v1/audio/transcriptions` (Qwen3-ASR, warm) → `POST /v1/chat/completions` (Gemma, MTP speculative decoding, thinking off) → text; the host emits a `clip` event that the server records for Insights. Polishing is skipped when fewer than 1.5 s of bb's budget remain and any polish failure returns the raw transcript.
 
 ## Development
 
 ```sh
-/usr/bin/npm install
-./node_modules/.bin/vitest run
+npm install
+./node_modules/.bin/vitest run       # 140+ tests: engines, pipeline, dock, insights, leaderboard
 ./node_modules/.bin/tsc --noEmit
-bb plugin dev
+bb plugin dev                        # rebuild + reload on save
 ```
+
+Design notes live in the author's extensions repo (`docs/superpowers/specs/2026-09-1{4,5}-*`).

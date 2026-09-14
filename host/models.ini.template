@@ -1,35 +1,35 @@
 version = 1
 
 [*]
-t = 20
+t = __THREADS__
 load-on-startup = true
 
 ; Speech recognition (Alibaba Qwen3-ASR 1.7B, Q4_K_M requantized from ggml-org Q8_0)
 [qwen3-asr]
-model = /home/pritam/.bb/local-voice/Qwen3-ASR-1.7B-Q4_K_M.gguf
-mmproj = /home/pritam/.bb/local-voice/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+model = __DIR__/Qwen3-ASR-1.7B-Q4_K_M.gguf
+mmproj = __DIR__/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
 c = 8192
 
 ; Smaller/faster fallback ASR (loads on first use)
 [qwen3-asr-0.6b]
-model = /home/pritam/.bb/local-voice/Qwen3-ASR-0.6B-Q8_0.gguf
-mmproj = /home/pritam/.bb/local-voice/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+model = __DIR__/Qwen3-ASR-0.6B-Q8_0.gguf
+mmproj = __DIR__/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
 c = 8192
 load-on-startup = false
 
 ; Dictation polisher (Google Gemma 4 E4B instruct, Q4_0, MTP speculative decoding, thinking off)
 [gemma-4-e4b]
-model = /home/pritam/.bb/local-voice/gemma-4-E4B-it-Q4_0.gguf
+model = __DIR__/gemma-4-E4B-it-Q4_0.gguf
 spec-type = draft-mtp
-model-draft = /home/pritam/.bb/local-voice/mtp-gemma-4-E4B-it-Q4_0.gguf
+model-draft = __DIR__/mtp-gemma-4-E4B-it-Q4_0.gguf
 c = 4096
 reasoning-budget = 0
 
 ; Faster/smaller polisher alternative (loads on first use)
 [gemma-4-e2b]
-model = /home/pritam/.bb/local-voice/gemma-4-E2B-it-Q8_0.gguf
+model = __DIR__/gemma-4-E2B-it-Q8_0.gguf
 spec-type = draft-mtp
-model-draft = /home/pritam/.bb/local-voice/mtp-gemma-4-E2B-it-Q8_0.gguf
+model-draft = __DIR__/mtp-gemma-4-E2B-it-Q8_0.gguf
 c = 4096
 reasoning-budget = 0
 load-on-startup = false
