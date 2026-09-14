@@ -1,0 +1,42 @@
+.bbw-dock {
+  position: fixed;
+  z-index: 2147483000;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--border, #d4d4d8);
+  background: var(--background, #fff);
+  color: var(--muted-foreground, #71717a);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.bbw-dock[hidden] { display: none; }
+.bbw-dock:hover { color: var(--foreground, #18181b); }
+.bbw-dock:focus-visible { outline: 2px solid var(--ring, var(--primary, #2563eb)); outline-offset: 2px; }
+.bbw-dock svg { width: 14px; height: 14px; }
+.bbw-dock[data-state="recording"] {
+  color: var(--destructive, #dc2626);
+  border-color: currentColor;
+  animation: bbw-pulse 1.2s ease-in-out infinite;
+}
+.bbw-dock[data-state="transcribing"] { cursor: progress; color: var(--primary, #2563eb); }
+.bbw-dock[data-state="transcribing"] svg { animation: bbw-spin 0.9s linear infinite; }
+.bbw-dock[data-state="error"] { color: var(--destructive, #dc2626); border-color: currentColor; animation: bbw-shake 0.3s ease; }
+@keyframes bbw-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes bbw-spin { to { transform: rotate(360deg); } }
+@keyframes bbw-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bbw-dock, .bbw-dock svg { animation: none !important; transition: none; }
+}
