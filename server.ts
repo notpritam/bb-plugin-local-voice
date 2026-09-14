@@ -1,5 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { LOCAL_VOICE_SERVICE_ID, serverHostContract, type WhisperConfig } from "./contract.js";
+import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, type WhisperConfig } from "./contract.js";
+import { deriveClip } from "./insights/clip.js";
+import { insightsRpcContract } from "./insights/rpc.js";
+import { migrate } from "./insights/schema.js";
+import { InsightsStore } from "./insights/store.js";
+import { buildUsageReport } from "./insights/usage.js";
 import { DEFAULT_CONFIG, configFromSettings } from "./whisper.js";
 
 export default async function plugin(bb: BbPluginApi) {
@@ -42,7 +47,41 @@ export default async function plugin(bb: BbPluginApi) {
     kinds: ["voice"],
   });
 
-  const host = bb.hosts.experimental_client({ contract: serverHostContract });
+  const host = bb.hosts.experimental_client({ contract: serverHostContract, experimental_signals: hostSignals });
+
+  // ---- Insights: every finished dictation lands here as a host signal.
+  const db = bb.storage.database();
+  migrate(db);
+  const store = new InsightsStore(db);
+
+  host.experimental_onSignal("clip", ({ payload }) => {
+    const clip = deriveClip(payload);
+    if (clip === null) return;
+    store.insertClip(clip);
+    bb.realtime.publish("voice-clip", { words: clip.words, day: clip.day });
+  });
+
+  bb.rpc.register(insightsRpcContract, {
+    insights_usage: () => buildUsageReport(store.usageRows(), new Date()),
+    insights_clear: () => {
+      store.clear();
+      bb.realtime.publish("voice-clip", { words: 0, day: "" });
+      return { ok: true as const };
+    },
+  });
+
+  // Content categories are filled in lazily so the transcription path stays fast.
+  bb.background.schedule("classify", "* * * * *", async () => {
+    const pending = store.uncategorized(20);
+    if (pending.length === 0) return;
+    const { primaryHostId } = await bb.sdk.system.config();
+    if (primaryHostId === null) return;
+    const { labels } = await host.call("classify", { texts: pending.map((p) => p.text) }, { hostId: primaryHostId });
+    pending.forEach((p, i) => {
+      const label = labels[i];
+      if (label) store.setCategory(p.id, label);
+    });
+  });
 
   async function currentConfig(): Promise<WhisperConfig> {
     return configFromSettings(await settings.get());

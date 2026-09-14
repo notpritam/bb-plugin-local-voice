@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "./server";
 
 function makeHost(overrides: { primaryHostId?: string | null } = {}) {
-  const callHostRpc = vi.fn(async () => ({ ok: true }));
+  const callHostRpc = vi.fn(async (_call: { method: string }) => ({ ok: true }) as unknown);
   const { bb, harness } = createFakePluginHost({
     pluginId: "local-voice",
     experimental_hostEntry: true,
@@ -73,5 +73,56 @@ describe("server", () => {
     service.controller.abort();
     await service.done;
     expect(callHostRpc).not.toHaveBeenCalled();
+  });
+});
+
+const clipPayload = {
+  at: Date.now(), filename: "bb-dock.webm", mimeType: "audio/webm", language: "English", durationMs: 4000,
+  rawText: "um commit and push this", text: "Commit and push this.", polished: true, translated: false, asrMs: 800, polishMs: 300,
+  engine: "llama" as const, model: "qwen3-asr",
+};
+
+describe("insights", () => {
+  it("records a clip from the host signal and publishes voice-clip", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.experimental_emitHostSignal("host-1", "clip", clipPayload);
+    const report = await harness.behavior.callRpc("insights_usage", null);
+    expect(report).toMatchObject({
+      totals: { words: 4, clips: 1 },
+      fixes: { edits: 1, fillers: 1 },
+      surfaces: expect.arrayContaining([expect.objectContaining({ key: "field", clips: 1 })]),
+    });
+    expect(harness.inspection.realtimeSignals.at(-1)).toMatchObject({ channel: "voice-clip", payload: { words: 4 } });
+  });
+
+  it("ignores empty clips", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.experimental_emitHostSignal("host-1", "clip", { ...clipPayload, text: " " });
+    expect(await harness.behavior.callRpc("insights_usage", null)).toMatchObject({ totals: { clips: 0 } });
+  });
+
+  it("classify schedule labels pending clips through the host", async () => {
+    const { bb, harness, callHostRpc } = makeHost();
+    callHostRpc.mockImplementation(async ({ method }) => (method === "classify" ? { labels: ["code"] } : { ok: true }));
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.experimental_emitHostSignal("host-1", "clip", clipPayload);
+    await harness.behavior.runSchedule("classify");
+    expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "classify", input: { texts: ["Commit and push this."] } });
+    const report = await harness.behavior.callRpc("insights_usage", null);
+    expect(report).toMatchObject({ categories: expect.arrayContaining([expect.objectContaining({ key: "code", clips: 1 })]) });
+  });
+
+  it("insights_clear wipes clips", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.experimental_emitHostSignal("host-1", "clip", clipPayload);
+    expect(await harness.behavior.callRpc("insights_clear", null)).toEqual({ ok: true });
+    expect(await harness.behavior.callRpc("insights_usage", null)).toMatchObject({ totals: { clips: 0 } });
   });
 });
