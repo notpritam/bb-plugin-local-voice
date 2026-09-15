@@ -42,7 +42,9 @@
 }
 
 /* ---- Voice insights page ---- */
-.bbv-page { padding: 28px 32px 48px; color: var(--foreground); font-size: 14px; line-height: 1.5; max-width: 1080px; font-variant-numeric: tabular-nums; }
+/* The host mounts the page inside a fixed-height overflow-hidden flex column; the page owns its own scrolling. */
+.bbv-page { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; width: 100%; padding: 28px 32px 48px; color: var(--foreground); font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.bbv-page > * { max-width: 1080px; }
 .bbv-page h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .bbv-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .bbv-header-copy { color: var(--muted-foreground); margin: 4px 0 0; font-size: 13px; }
