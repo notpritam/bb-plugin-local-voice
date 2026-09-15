@@ -78,3 +78,18 @@
     board.innerHTML = `<p class="muted">The board is not reachable right now (${esc(String(error.message || error))}). It lives on the same host as this page; try again in a moment.</p>`;
   }
 })();
+
+// The pipeline film: honour reduced motion by not auto-playing (the poster
+// and the controls stay), and stop looping once the tab is hidden.
+(() => {
+  const film = document.querySelector(".film video");
+  if (!film) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    film.removeAttribute("autoplay");
+    film.pause();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) film.pause();
+    else if (film.hasAttribute("autoplay")) film.play().catch(() => {});
+  });
+})();

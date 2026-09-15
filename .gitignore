@@ -4,3 +4,9 @@ node_modules/
 .env.*
 *.db
 *.db-*
+
+# HyperFrames video projects: keep sources, drop renders and caches
+video/*/renders/
+video/*/snapshots/
+video/*/node_modules/
+video/*/.hyperframes/

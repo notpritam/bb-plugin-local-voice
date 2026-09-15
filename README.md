@@ -86,7 +86,19 @@ Limits: joins 10/hour/IP, reports and board reads 60/min/IP, 60,000 words per me
 
 ## How a clip flows
 
-ffmpeg → 16 kHz wav → silence gate (−50 dBFS) → `POST /v1/audio/transcriptions` (Qwen3-ASR, warm) → `POST /v1/chat/completions` (Gemma, MTP speculative decoding, thinking off) → text; the host emits a `clip` event that the server records for Insights. Polishing is skipped when fewer than 1.5 s of bb's budget remain and any polish failure returns the raw transcript.
+![One dictation, start to finish: record, convert, recognise, parse, polish, insert, record the clip, measure, insights.](site/assets/pipeline.gif)
+
+*42-second walkthrough of one real Hinglish take. [MP4](https://voice.notpritam.in/assets/pipeline.mp4) · [source](video/pipeline-explainer) (a [HyperFrames](https://github.com/heygen-com/hyperframes) composition; `npm run render` there rebuilds it).*
+
+1. **Record** — the browser captures Opus/webm (`bb-dock.webm` from a docked field, bb's own name from the composer) and posts it to `/api/v1/system/voice-transcription` on your bb host.
+2. **Convert** — ffmpeg → 16 kHz mono PCM. The wav is read by walking its RIFF chunks (ffmpeg adds a `LIST` chunk, so a 44-byte header assumption would be wrong): duration = data bytes ÷ 32, loudness = RMS in dBFS. Below −50 dBFS the clip is silence and returns empty instead of a hallucinated "you".
+3. **Recognise** — `POST /v1/audio/transcriptions` to Qwen3-ASR-1.7B (warm on the llama-server router). It answers in the spoken language with a prefix: `language Hindi<asr_text>यार कल का डिप्लॉय…`.
+4. **Parse** — one regex, `/^\s*language\s+([A-Za-z_-]+)\s*<asr_text>/u`, splits that into `language` and `text`. No prefix means an unknown language and the whole string is the text.
+5. **Polish** — `POST /v1/chat/completions` to Gemma 4 E4B with a transcriptionist prompt: temperature 0, thinking off, MTP speculative decoding; fillers and false starts out, punctuation and lists in, `dot t s x` → `.tsx`, identifiers kept, output in English (switchable). Skipped when fewer than 1.5 s of bb's 10 s budget remain; any failure returns the raw transcript.
+6. **Insert** — bb (composer) or the dock (any field) puts the text at the caret, collapsing a selection to its end first and adding the space you would have typed.
+7. **Record the clip** — the host emits a `clip` signal `{filename, language, durationMs, rawText, text, polished, translated, asrMs, polishMs, engine, model}`; the server derives the surface from the filename (`bb-dock.*` → field, `recording.*` → composer, else CLI) and writes a row to its SQLite.
+8. **Measure** — a Unicode tokenizer (letters, digits, marks; apostrophes kept) counts words; fillers (`um`, `uh`, `hmm`, …) are matched from a set; *fixes* is the token-level Levenshtein distance between raw and polished — 0 when the clip was translated, because a rewrite is not a correction; WPM = spoken words ÷ duration.
+9. **Insights** — categories are labelled by the local model once a minute, the persona is rewritten every 2,000 words, and every 15 minutes `{day, words, clips}` for the last 8 days goes to the leaderboard if you joined.
 
 ## Landing site
 
