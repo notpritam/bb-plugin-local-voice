@@ -59,7 +59,24 @@ export const leaderboardStatusSchema = z.object({
 });
 export type LeaderboardStatusDto = z.infer<typeof leaderboardStatusSchema>;
 
+const inviteRow = z.object({ code: z.string(), label: z.string(), maxUses: z.number(), uses: z.number(), createdAt: z.number(), revokedAt: z.number().nullable() });
+const memberOverview = z.object({ memberId: z.string(), displayName: z.string(), createdAt: z.number(), lastSeen: z.number(), inviteCode: z.string().nullable(), days: z.number(), words: z.number() });
+const eventRow = z.object({ at: z.number(), kind: z.enum(["join", "report", "leave", "rejected"]), memberId: z.string().nullable(), ipHash: z.string().nullable(), detail: z.string().nullable() });
+export const adminOverviewSchema = z.object({
+  hosting: z.boolean(),
+  maxMembers: z.number(),
+  counts: z.object({ members: z.number(), join: z.number(), report: z.number(), leave: z.number(), rejected: z.number() }),
+  members: z.array(memberOverview),
+  invites: z.array(inviteRow),
+  events: z.array(eventRow),
+});
+export type AdminOverviewDto = z.infer<typeof adminOverviewSchema>;
+
 export const leaderboardRpcContract = defineRpcContract({
+  leaderboard_admin_overview: { input: z.null(), output: adminOverviewSchema },
+  leaderboard_admin_invite_create: { input: z.object({ label: z.string().min(1).max(60), maxUses: z.number().int().min(1).max(1000) }).strict(), output: z.object({ code: z.string() }).strict() },
+  leaderboard_admin_invite_revoke: { input: z.object({ code: z.string().min(1) }).strict(), output: z.object({ ok: z.boolean() }).strict() },
+  leaderboard_admin_member_remove: { input: z.object({ memberId: z.string().min(1) }).strict(), output: z.object({ ok: z.boolean() }).strict() },
   leaderboard_status: { input: z.null(), output: leaderboardStatusSchema },
   leaderboard_join: { input: z.null(), output: z.object({ ok: z.boolean(), memberId: z.string().optional(), message: z.string().optional() }).strict() },
   leaderboard_leave: { input: z.null(), output: z.object({ ok: z.boolean(), message: z.string().optional() }).strict() },

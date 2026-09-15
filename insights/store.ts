@@ -4,6 +4,11 @@ import type { NewClip, Surface } from "./clip.js";
 import type { MemberTotal, ReportDay } from "./leaderboard.js";
 export type { NewClip } from "./clip.js";
 
+export type EventKind = "join" | "report" | "leave" | "rejected";
+export interface InviteRow { code: string; label: string; maxUses: number; uses: number; createdAt: number; revokedAt: number | null }
+export interface EventRow { at: number; kind: EventKind; memberId: string | null; ipHash: string | null; detail: string | null }
+export interface MemberOverview { memberId: string; displayName: string; createdAt: number; lastSeen: number; inviteCode: string | null; days: number; words: number }
+
 export interface UsageRow {
   at: number;
   day: string;
@@ -137,10 +142,79 @@ export class InsightsStore {
   }
 
   // ---- leaderboard (public host side)
-  lbJoin(m: { id: string; displayName: string; tokenHash: string; now: number; ipHash: string | null }): void {
+  lbJoin(m: { id: string; displayName: string; tokenHash: string; now: number; ipHash: string | null; inviteCode: string | null }): void {
     this.db
-      .prepare("INSERT INTO lb_members (id, display_name, token_hash, created_at, last_seen, ip_hash) VALUES (@id, @displayName, @tokenHash, @now, @now, @ipHash)")
+      .prepare(
+        "INSERT INTO lb_members (id, display_name, token_hash, created_at, last_seen, ip_hash, invite_code) VALUES (@id, @displayName, @tokenHash, @now, @now, @ipHash, @inviteCode)",
+      )
       .run(m);
+  }
+
+  // ---- invites (the host decides who may join)
+  lbCreateInvite(i: { code: string; label: string; maxUses: number; now: number }): void {
+    this.db.prepare("INSERT INTO lb_invites (code, label, max_uses, uses, created_at) VALUES (@code, @label, @maxUses, 0, @now)").run(i);
+  }
+
+  lbListInvites(): InviteRow[] {
+    return (
+      this.db
+        .prepare("SELECT code, label, max_uses, uses, created_at, revoked_at FROM lb_invites ORDER BY created_at DESC")
+        .all() as { code: string; label: string; max_uses: number; uses: number; created_at: number; revoked_at: number | null }[]
+    ).map((r) => ({ code: r.code, label: r.label, maxUses: r.max_uses, uses: r.uses, createdAt: r.created_at, revokedAt: r.revoked_at }));
+  }
+
+  lbRevokeInvite(code: string, now: number): boolean {
+    return this.db.prepare("UPDATE lb_invites SET revoked_at = ? WHERE code = ? AND revoked_at IS NULL").run(now, code).changes === 1;
+  }
+
+  /** Atomically consume one use of an invite. */
+  lbClaimInvite(code: string, now: number): { ok: true } | { ok: false; reason: "unknown" | "revoked" | "exhausted" } {
+    return this.db.transaction((): { ok: true } | { ok: false; reason: "unknown" | "revoked" | "exhausted" } => {
+      const row = this.db.prepare("SELECT max_uses, uses, revoked_at FROM lb_invites WHERE code = ?").get(code) as
+        | { max_uses: number; uses: number; revoked_at: number | null }
+        | undefined;
+      if (row === undefined) return { ok: false, reason: "unknown" };
+      if (row.revoked_at !== null) return { ok: false, reason: "revoked" };
+      if (row.uses >= row.max_uses) return { ok: false, reason: "exhausted" };
+      this.db.prepare("UPDATE lb_invites SET uses = uses + 1 WHERE code = ?").run(code);
+      void now;
+      return { ok: true };
+    })();
+  }
+
+  // ---- events (what the host sees happening)
+  lbLogEvent(e: { at: number; kind: EventKind; memberId: string | null; ipHash: string | null; detail: string | null }): void {
+    this.db.prepare("INSERT INTO lb_events (at, kind, member_id, ip_hash, detail) VALUES (@at, @kind, @memberId, @ipHash, @detail)").run(e);
+    this.db.prepare("DELETE FROM lb_events WHERE id < (SELECT COALESCE(MAX(id), 0) - 5000 FROM lb_events)").run();
+  }
+
+  lbRecentEvents(limit: number): EventRow[] {
+    return (
+      this.db.prepare("SELECT at, kind, member_id, ip_hash, detail FROM lb_events ORDER BY id DESC LIMIT ?").all(limit) as {
+        at: number; kind: EventKind; member_id: string | null; ip_hash: string | null; detail: string | null;
+      }[]
+    ).map((r) => ({ at: r.at, kind: r.kind, memberId: r.member_id, ipHash: r.ip_hash, detail: r.detail }));
+  }
+
+  lbEventCounts(sinceMs: number): Record<EventKind, number> {
+    const counts: Record<EventKind, number> = { join: 0, report: 0, leave: 0, rejected: 0 };
+    for (const r of this.db.prepare("SELECT kind, COUNT(*) AS n FROM lb_events WHERE at >= ? GROUP BY kind").all(sinceMs) as { kind: EventKind; n: number }[]) {
+      counts[r.kind] = r.n;
+    }
+    return counts;
+  }
+
+  lbMembersOverview(): MemberOverview[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT m.id AS memberId, m.display_name AS displayName, m.created_at AS createdAt, m.last_seen AS lastSeen, m.invite_code AS inviteCode,
+                  COUNT(d.day) AS days, COALESCE(SUM(d.words), 0) AS words
+           FROM lb_members m LEFT JOIN lb_daily d ON d.member_id = m.id
+           GROUP BY m.id ORDER BY words DESC, m.created_at ASC`,
+        )
+        .all() as MemberOverview[]
+    );
   }
 
   lbVerify(memberId: string, tokenHash: string): boolean {

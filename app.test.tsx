@@ -97,10 +97,14 @@ describe("Leaderboard tab", () => {
         leaderboard_status: () => ({ enabled: true, joined: true, memberId: "me", displayName: "Pritam Sharma", url: "https://x", lastReportAt: null, lastError: null }),
         leaderboard_board: () => ({ period: "week", total: 4, offset: 0, members, me: members[3] }),
         leaderboard_join: () => ({ ok: true }), leaderboard_leave: () => ({ ok: true }),
+        leaderboard_admin_overview: () => ({ hosting: true, maxMembers: 100, counts: { members: 4, join: 2, report: 9, leave: 0, rejected: 1 }, members: [{ memberId: "m1", displayName: "Ishan Kumar", createdAt: 1, lastSeen: 2, inviteCode: "abcd2345", days: 3, words: 9000 }], invites: [{ code: "abcd2345", label: "friends", maxUses: 5, uses: 1, createdAt: 1, revokedAt: null }], events: [{ at: 2, kind: "join", memberId: "m1", ipHash: null, detail: "Ishan Kumar via abcd2345" }] }),
+        leaderboard_admin_invite_create: () => ({ code: "zzzz2345" }), leaderboard_admin_invite_revoke: () => ({ ok: true }), leaderboard_admin_member_remove: () => ({ ok: true }),
       },
     });
     (await slot.findByText("Leaderboard")).click();
-    expect(await slot.findAllByText("Ishan Kumar")).toHaveLength(2); // podium + table
+    expect(await slot.findAllByText("Ishan Kumar")).toHaveLength(3); // podium + table + admin members
+    await slot.findByText(/You host this board/);
+    expect(slot.getAllByText("abcd2345").length).toBeGreaterThanOrEqual(1);
     expect(slot.getByText(/Pritam Sharma \(you\)/)).toBeTruthy();
     expect(slot.getByText("↑9")).toBeTruthy();
     expect(slot.getByText(/1-4 of 4/)).toBeTruthy();

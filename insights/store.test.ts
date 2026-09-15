@@ -57,8 +57,8 @@ describe("profile + samples", () => {
 
 describe("leaderboard store", () => {
   it("joins, verifies, upserts days, ranks by period, leaves", () => {
-    store.lbJoin({ id: "aaaa", displayName: "Ann", tokenHash: "h1", now: 1, ipHash: null });
-    store.lbJoin({ id: "bbbb", displayName: "Bob", tokenHash: "h2", now: 1, ipHash: null });
+    store.lbJoin({ id: "aaaa", displayName: "Ann", tokenHash: "h1", now: 1, ipHash: null, inviteCode: null });
+    store.lbJoin({ id: "bbbb", displayName: "Bob", tokenHash: "h2", now: 1, ipHash: null, inviteCode: null });
     expect(store.lbVerify("aaaa", "h1")).toBe(true);
     expect(store.lbVerify("aaaa", "nope")).toBe(false);
     expect(store.lbVerify("zzzz", "h1")).toBe(false);
@@ -83,5 +83,31 @@ describe("leaderboard store", () => {
     store.insertClip(clip({ day: "2026-09-14", words: 5 }));
     store.insertClip(clip({ day: "2026-09-15", words: 7 }));
     expect(store.dailyTotalsSince("2026-09-14")).toEqual([{ day: "2026-09-14", words: 15, clips: 2 }, { day: "2026-09-15", words: 7, clips: 1 }]);
+  });
+});
+
+describe("invites + events (v2)", () => {
+  it("creates, lists, claims, exhausts and revokes invites", () => {
+    store.lbCreateInvite({ code: "ab12cd34", label: "friends", maxUses: 2, now: 1 });
+    expect(store.lbListInvites()).toMatchObject([{ code: "ab12cd34", label: "friends", maxUses: 2, uses: 0, revokedAt: null }]);
+    expect(store.lbClaimInvite("ab12cd34", 2)).toEqual({ ok: true });
+    expect(store.lbClaimInvite("ab12cd34", 3)).toEqual({ ok: true });
+    expect(store.lbClaimInvite("ab12cd34", 4)).toEqual({ ok: false, reason: "exhausted" });
+    expect(store.lbClaimInvite("nope", 4)).toEqual({ ok: false, reason: "unknown" });
+    store.lbCreateInvite({ code: "zz99zz99", label: "team", maxUses: 10, now: 5 });
+    store.lbRevokeInvite("zz99zz99", 6);
+    expect(store.lbClaimInvite("zz99zz99", 7)).toEqual({ ok: false, reason: "revoked" });
+    expect(store.lbListInvites().find((i) => i.code === "zz99zz99")?.revokedAt).toBe(6);
+  });
+  it("records members with their invite, logs events, and builds the overview", () => {
+    store.lbCreateInvite({ code: "ab12cd34", label: "friends", maxUses: 5, now: 1 });
+    store.lbJoin({ id: "aaaa", displayName: "Ann", tokenHash: "h1", now: 10, ipHash: "ip1", inviteCode: "ab12cd34" });
+    store.lbLogEvent({ at: 10, kind: "join", memberId: "aaaa", ipHash: "ip1", detail: null });
+    store.lbUpsertDays("aaaa", [{ day: "2026-09-14", words: 100, clips: 2 }], 20);
+    store.lbLogEvent({ at: 20, kind: "report", memberId: "aaaa", ipHash: "ip1", detail: "1 day" });
+    const overview = store.lbMembersOverview();
+    expect(overview).toEqual([{ memberId: "aaaa", displayName: "Ann", createdAt: 10, lastSeen: 20, inviteCode: "ab12cd34", days: 1, words: 100 }]);
+    expect(store.lbRecentEvents(10).map((e) => e.kind)).toEqual(["report", "join"]);
+    expect(store.lbEventCounts(0)).toEqual({ join: 1, report: 1, leave: 0, rejected: 0 });
   });
 });

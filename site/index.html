@@ -97,8 +97,8 @@
           <p>After a couple of hundred words the local model writes a short persona from what you actually say, with your catchphrase and the word you correct most.</p>
         </div>
         <div>
-          <h3>A public leaderboard</h3>
-          <p>Opt in with a display name and your install posts daily word counts. Only counts and the name; no audio, no text, ever.</p>
+          <h3>A public leaderboard, by invitation</h3>
+          <p>Opt in with a display name and an invite code, and your install posts daily word counts. Only counts and the name; no audio, no text, ever. It's invite-only while the host watches usage.</p>
         </div>
         <div>
           <h3>Private by construction</h3>
@@ -125,7 +125,7 @@
       <div id="board" class="board" aria-live="polite">
         <p class="muted">Loading…</p>
       </div>
-      <p class="muted board-foot">Ranks reset each ISO week. Everyone on the board opted in from their own bb.</p>
+      <p class="muted board-foot">Ranks reset each ISO week. Everyone on the board opted in from their own bb with an invite. <a href="https://github.com/notpritam/bb-plugin-local-voice/issues/new?title=Invite%20request&body=Hi%20Pritam%2C%20I%27d%20like%20an%20invite%20code%20for%20the%20Local%20Voice%20leaderboard.%20Display%20name%3A%20">Ask for an invite</a>.</p>
     </section>
 
     <section class="section" id="install">
@@ -139,7 +139,7 @@ bb-app config set BB_TRANSCRIPTION local/qwen3-asr</code></pre>
       <p>Or from the marketplace, then run <code>host/setup.sh</code> from the installed plugin directory:</p>
       <pre><code>bb marketplace add git:github.com/notpritam/bb-marketplace@main
 bb plugin install local-voice@notpritam</code></pre>
-      <p>Hard-refresh the bb app afterwards. The <strong>Voice</strong> page appears in the sidebar and the mic appears on every field.</p>
+      <p>Hard-refresh the bb app afterwards. The <strong>Voice</strong> page appears in the sidebar and the mic appears on every field. To join the board, set <code>leaderboard</code>, <code>displayName</code> and your <code>leaderboardInvite</code> in the plugin settings, then press Join on the Leaderboard tab.</p>
     </section>
   </main>
 

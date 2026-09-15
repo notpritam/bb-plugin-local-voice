@@ -23,8 +23,8 @@ async function call<T>(fetchImpl: typeof fetch, url: string, init: RequestInit):
   return json as T;
 }
 
-export function joinRemote(base: string, displayName: string, fetchImpl: typeof fetch = lbFetch): Promise<{ memberId: string; token: string }> {
-  return call(fetchImpl, `${base}/join`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ displayName }) });
+export function joinRemote(base: string, body: { displayName: string; invite: string }, fetchImpl: typeof fetch = lbFetch): Promise<{ memberId: string; token: string }> {
+  return call(fetchImpl, `${base}/join`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
 export function reportRemote(base: string, auth: { memberId: string; token: string; displayName?: string }, days: ReportDay[], fetchImpl: typeof fetch = lbFetch): Promise<{ ok: true }> {

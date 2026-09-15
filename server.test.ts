@@ -170,16 +170,18 @@ describe("leaderboard public routes", () => {
     const { bb, harness } = makeHost();
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.setSettings({ leaderboardHost: true });
+    const { code: invite } = (await harness.behavior.callRpc("leaderboard_admin_invite_create", { label: "test", maxUses: 20 })) as { code: string };
     const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
       harness.behavior.fetchHttp("POST", path, { body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
-    return { harness, post };
+    return { harness, post, invite };
   }
 
   it("join → report → board → leave", async () => {
-    const { harness, post } = await up();
-    const joined = (await (await post("/leaderboard/join", { displayName: "  Ann  " })).json()) as { memberId: string; token: string };
+    const { harness, post, invite } = await up();
+    const joined = (await (await post("/leaderboard/join", { displayName: "  Ann  ", invite })).json()) as { memberId: string; token: string };
     expect(joined.memberId).toMatch(/^[a-z0-9]{12}$/u);
-    const bob = (await (await post("/leaderboard/join", { displayName: "Bob" })).json()) as { memberId: string; token: string };
+    const bob = (await (await post("/leaderboard/join", { displayName: "Bob", invite })).json()) as { memberId: string; token: string };
 
     const today = new Date().toISOString().slice(0, 10);
     expect((await post("/leaderboard/report", { ...joined, days: [{ day: today, words: 400, clips: 4 }] })).status).toBe(200);
@@ -190,8 +192,8 @@ describe("leaderboard public routes", () => {
     expect(board.members.map((m) => [m.rank, m.displayName, m.words])).toEqual([[1, "Bob", 900], [2, "Ann", 400]]);
     expect(board.me).toMatchObject({ rank: 2 });
 
-    const health = (await (await harness.behavior.fetchHttp("GET", "/leaderboard/health")).json()) as { ok: boolean; members: number };
-    expect(health).toEqual({ ok: true, members: 2 });
+    const health = (await (await harness.behavior.fetchHttp("GET", "/leaderboard/health")).json()) as { ok: boolean; members: number; inviteOnly: boolean };
+    expect(health).toEqual({ ok: true, members: 2, inviteOnly: true });
 
     expect((await post("/leaderboard/leave", { memberId: joined.memberId, token: joined.token })).status).toBe(200);
     const after = (await (await harness.behavior.fetchHttp("GET", "/leaderboard/board?period=all")).json()) as { total: number };
@@ -199,18 +201,52 @@ describe("leaderboard public routes", () => {
   });
 
   it("rejects bad names, bad tokens, bad days", async () => {
-    const { post } = await up();
-    expect((await post("/leaderboard/join", { displayName: "x" })).status).toBe(400);
-    const joined = (await (await post("/leaderboard/join", { displayName: "Ann" })).json()) as { memberId: string; token: string };
+    const { post, invite } = await up();
+    expect((await post("/leaderboard/join", { displayName: "x", invite })).status).toBe(400);
+    const joined = (await (await post("/leaderboard/join", { displayName: "Ann", invite })).json()) as { memberId: string; token: string };
     expect((await post("/leaderboard/report", { memberId: joined.memberId, token: "wrong", days: [{ day: "2026-09-15", words: 1, clips: 1 }] })).status).toBe(401);
     expect((await post("/leaderboard/report", { ...joined, days: [{ day: "2026-09-15", words: 999_999, clips: 1 }] })).status).toBe(400);
     expect((await post("/leaderboard/report", { ...joined, days: "nope" })).status).toBe(400);
   });
 
+  it("requires a valid, unrevoked, unexhausted invite and honours the member cap", async () => {
+    const { harness, post, invite } = await up();
+    expect((await post("/leaderboard/join", { displayName: "NoInvite" })).status).toBe(403);
+    expect((await post("/leaderboard/join", { displayName: "Wrong", invite: "nope1234" })).status).toBe(403);
+    const { code: single } = (await harness.behavior.callRpc("leaderboard_admin_invite_create", { label: "one", maxUses: 1 })) as { code: string };
+    expect((await post("/leaderboard/join", { displayName: "First", invite: single })).status).toBe(200);
+    expect((await post("/leaderboard/join", { displayName: "Second", invite: single })).status).toBe(403);
+    await harness.behavior.callRpc("leaderboard_admin_invite_revoke", { code: invite });
+    expect((await post("/leaderboard/join", { displayName: "Late", invite })).status).toBe(403);
+    await harness.behavior.setSettings({ leaderboardMaxMembers: "1" });
+    const { code: fresh } = (await harness.behavior.callRpc("leaderboard_admin_invite_create", { label: "fresh", maxUses: 5 })) as { code: string };
+    expect((await post("/leaderboard/join", { displayName: "Overflow", invite: fresh })).status).toBe(403);
+    const overview = (await harness.behavior.callRpc("leaderboard_admin_overview", null)) as { hosting: boolean; members: { displayName: string }[]; invites: unknown[]; events: { kind: string }[]; counts: { rejected: number } };
+    expect(overview.hosting).toBe(true);
+    expect(overview.members.map((m) => m.displayName)).toEqual(["First"]);
+    expect(overview.invites).toHaveLength(3);
+    expect(overview.counts.rejected).toBeGreaterThanOrEqual(4);
+  });
+
+  it("admin can remove a member; CLI mirrors the admin surface", async () => {
+    const { harness, post, invite } = await up();
+    const joined = (await (await post("/leaderboard/join", { displayName: "Ann", invite })).json()) as { memberId: string };
+    expect(await harness.behavior.callRpc("leaderboard_admin_member_remove", { memberId: joined.memberId })).toEqual({ ok: true });
+    expect(((await harness.behavior.callRpc("leaderboard_admin_overview", null)) as { members: unknown[] }).members).toHaveLength(0);
+    const list = await harness.behavior.runCli(["invites"]);
+    expect(list.exitCode).toBe(0);
+    expect(list.stdout).toContain(invite);
+    const created = await harness.behavior.runCli(["invite", "Beta testers", "--uses", "3"]);
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toMatch(/[a-z0-9]{8}/u);
+    const members = await harness.behavior.runCli(["members", "--json"]);
+    expect(JSON.parse(members.stdout)).toEqual([]);
+  });
+
   it("rate limits joins per ip", async () => {
-    const { post } = await up();
+    const { post, invite } = await up();
     const statuses: number[] = [];
-    for (let i = 0; i < 12; i += 1) statuses.push((await post("/leaderboard/join", { displayName: `User ${i}` }, { "x-forwarded-for": "203.0.113.9" })).status);
+    for (let i = 0; i < 12; i += 1) statuses.push((await post("/leaderboard/join", { displayName: `User ${i}`, invite }, { "x-forwarded-for": "203.0.113.9" })).status);
     expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
     expect(statuses[10]).toBe(429);
   });
@@ -238,11 +274,11 @@ describe("leaderboard client", () => {
     const { bb, harness } = makeHost();
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
-    await harness.behavior.setSettings({ leaderboard: true, displayName: "Pritam", leaderboardUrl: "https://voice.example.test/api/v1/plugins/local-voice/http/leaderboard" });
+    await harness.behavior.setSettings({ leaderboard: true, displayName: "Pritam", leaderboardInvite: "inv1te00", leaderboardUrl: "https://voice.example.test/api/v1/plugins/local-voice/http/leaderboard" });
     await harness.behavior.experimental_emitHostSignal("host-1", "clip", clipPayload);
 
     expect(await harness.behavior.callRpc("leaderboard_join", null)).toMatchObject({ ok: true, memberId: "abcdefghijkl" });
-    expect(calls[0]).toMatchObject({ url: "https://voice.example.test/api/v1/plugins/local-voice/http/leaderboard/join", body: { displayName: "Pritam" } });
+    expect(calls[0]).toMatchObject({ url: "https://voice.example.test/api/v1/plugins/local-voice/http/leaderboard/join", body: { displayName: "Pritam", invite: "inv1te00" } });
 
     await harness.behavior.runSchedule("leaderboard-report");
     const report = calls.find((c) => c.url.endsWith("/report"));

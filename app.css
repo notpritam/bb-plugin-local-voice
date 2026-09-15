@@ -126,3 +126,21 @@ h2.bbv-serif { font-size: 30px; line-height: 1.15; }
 .bbv-up { color: #16a34a; font-size: 12px; margin-left: 6px; }
 .bbv-down { color: #dc2626; font-size: 12px; margin-left: 6px; }
 .bbv-avatar { display: inline-flex; width: 28px; height: 28px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 85%, transparent); color: var(--background); font-size: 11px; font-weight: 700; align-items: center; justify-content: center; margin-right: 10px; vertical-align: middle; }
+
+.bbv-admin { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); display: grid; gap: 14px; }
+.bbv-admin-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.bbv-admin-counts div { background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; }
+.bbv-admin-counts strong { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.bbv-admin-counts span { font-size: 12px; color: var(--muted-foreground); }
+.bbv-admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.bbv-invite-form { display: flex; gap: 8px; margin-bottom: 12px; }
+.bbv-input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); }
+.bbv-input-n { flex: 0 0 72px; }
+.bbv-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: color-mix(in srgb, var(--foreground) 7%, transparent); padding: 1px 6px; border-radius: 5px; }
+.bbv-code-line { font-size: 13px; margin: 0 0 12px; }
+.bbv-table-tight th, .bbv-table-tight td { padding: 8px 10px; font-size: 13px; }
+.bbv-events { list-style: none; margin: 0; padding: 0; font-size: 13px; display: grid; gap: 6px; }
+.bbv-ev { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: 11px; text-transform: none; background: color-mix(in srgb, var(--foreground) 8%, transparent); }
+.bbv-ev-join { background: color-mix(in srgb, #16a34a 18%, transparent); }
+.bbv-ev-rejected { background: color-mix(in srgb, #dc2626 18%, transparent); }
+@media (max-width: 880px) { .bbv-admin-counts, .bbv-admin-grid { grid-template-columns: 1fr 1fr; } }

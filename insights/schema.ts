@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS clips (
@@ -57,9 +57,35 @@ CREATE TABLE IF NOT EXISTS lb_daily (
 );
 `;
 
+const DDL_V2 = `
+CREATE TABLE IF NOT EXISTS lb_invites (
+  code TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  max_uses INTEGER NOT NULL,
+  uses INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS lb_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  member_id TEXT,
+  ip_hash TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS lb_events_at ON lb_events(at);
+`;
+
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.pragma(`table_info(${table})`) as { name: string }[]).some((c) => c.name === column);
+}
+
 export function migrate(db: Database.Database): void {
   const version = db.pragma("user_version", { simple: true }) as number;
   if (version >= SCHEMA_VERSION) return;
   db.exec(DDL);
+  db.exec(DDL_V2);
+  if (!hasColumn(db, "lb_members", "invite_code")) db.exec("ALTER TABLE lb_members ADD COLUMN invite_code TEXT");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }

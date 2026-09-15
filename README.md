@@ -55,19 +55,34 @@ Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mi
 | `leaderboard` | `false` | join the public leaderboard |
 | `displayName` | — | name shown on the leaderboard |
 | `leaderboardUrl` | `https://voice.notpritam.in/…/leaderboard` | leaderboard host |
+| `leaderboardInvite` | — | invite code from the host (required to join) |
+| `leaderboardHost` | `false` | this install hosts a board: shows the admin panel |
+| `leaderboardMaxMembers` | `100` | host: cap on members |
 | `modelsDir`, `threads` | | whisper.cpp fallback |
 
 ## Insights (sidebar → Voice)
 
 - **Your usage** — total words, month-over-month, WPM gauge, fixes made (edits, fillers removed, clips translated), what you dictate (AI prompts / notes / messages / code, labelled by the local model), where (composer / fields / CLI), languages, streaks and a 24-week heatmap, peak time.
 - **Your voice** — after 200 words, and every 2,000 words after that, the local model writes a persona (title, description, catchphrase, peak-time blurb); most-used and most-corrected words are computed locally. *Regenerate* any time.
-- **Leaderboard** — this week (ISO week, with rank deltas) or all time; podium, table, jump-to-me. Opt in with `leaderboard=true` + `displayName`, then **Join**. Every 15 minutes your install posts the last 8 days of daily totals. **Leave** deletes your rows on the host.
+- **Leaderboard** — this week (ISO week, with rank deltas) or all time; podium, table, jump-to-me. It is **invite-only**: opt in with `leaderboard=true`, `displayName` and the `leaderboardInvite` code the host gave you, then **Join**. Every 15 minutes your install posts the last 8 days of daily totals. **Leave** deletes your rows on the host.
 
 Everything is stored in the plugin's SQLite on your bb server; **Clear history** wipes clips and the profile.
 
 ## Hosting a leaderboard yourself
 
-The plugin *is* the leaderboard server: routes under `/api/v1/plugins/local-voice/http/leaderboard/*` are registered with `auth: "none"`, so the bb server answers them without a session. Publish exactly that path with a reverse proxy — `host/Caddyfile.snippet` shows the Caddy block — and point other installs' `leaderboardUrl` at it. Joins are limited to 10/hour/IP, reports to 60/min/IP; daily counts are capped at 60,000 words.
+The plugin *is* the leaderboard server: routes under `/api/v1/plugins/local-voice/http/leaderboard/*` are registered with `auth: "none"`, so the bb server answers them without a session. Publish exactly that path with a reverse proxy — `host/Caddyfile.snippet` shows the Caddy block — and point other installs' `leaderboardUrl` at it.
+
+Joining needs an invite code. Set `leaderboardHost=true` on the hosting install and manage it from the Leaderboard tab's admin panel or the CLI:
+
+```sh
+bb local-voice invite "Beta testers" --uses 10   # prints a code to hand out
+bb local-voice invites                            # codes, uses, state
+bb local-voice members                            # who joined, words, last seen
+bb local-voice events --limit 50                  # joins, reports, leaves, rejected attempts
+bb local-voice revoke <code> · bb local-voice remove <member-id>
+```
+
+Limits: joins 10/hour/IP, reports and board reads 60/min/IP, 60,000 words per member-day, `leaderboardMaxMembers` (default 100). Rejected joins are logged with the reason.
 
 ## How a clip flows
 
