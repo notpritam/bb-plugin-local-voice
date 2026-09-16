@@ -14,6 +14,14 @@ export interface BridgeDeps {
   win: Window & typeof globalThis;
   rpc: RpcTransport;
   now?: () => number;
+  /** bb posts its clip right after the recorder stops; a recording nobody asked about by then was cancelled (or too short) and is discarded. */
+  claimTimeoutMs?: number;
+}
+
+export interface ComposerBridge {
+  /** The window's original MediaRecorder — the dock records with this one, so it never bridges itself. */
+  NativeMediaRecorder: typeof MediaRecorder;
+  uninstall(): void;
 }
 
 function isAudioOnly(stream: MediaStream): boolean {
@@ -38,13 +46,19 @@ function formFile(init: RequestInit | undefined): File | null {
   return file instanceof File ? file : null;
 }
 
-export function installComposerBridge(deps: BridgeDeps): () => void {
+export function installComposerBridge(deps: BridgeDeps): ComposerBridge {
   const { win, rpc } = deps;
   const now = deps.now ?? (() => Date.now());
+  const claimTimeoutMs = deps.claimTimeoutMs ?? 3000;
   const NativeRecorder = win.MediaRecorder;
   const nativeFetch = win.fetch;
   /** Uploads in flight for bb's recorders, newest last; claimed by the matching fetch. */
   const uploads: RecordingUpload[] = [];
+  const discard = (upload: RecordingUpload) => {
+    const i = uploads.indexOf(upload);
+    if (i >= 0) uploads.splice(i, 1);
+    upload.cancel();
+  };
 
   class BridgedMediaRecorder extends NativeRecorder {
     constructor(stream: MediaStream, options?: MediaRecorderOptions) {
@@ -57,7 +71,14 @@ export function installComposerBridge(deps: BridgeDeps): () => void {
         if (uploads.length > 4) uploads.shift()?.cancel();
       });
       this.addEventListener("dataavailable", (event) => upload?.append((event as BlobEvent).data));
-      this.addEventListener("stop", () => upload?.markStopped(now()));
+      this.addEventListener("stop", () => {
+        const current = upload;
+        if (current === null) return;
+        current.markStopped(now());
+        setTimeout(() => {
+          if (uploads.includes(current)) discard(current);
+        }, claimTimeoutMs);
+      });
     }
   }
 
@@ -102,11 +123,14 @@ export function installComposerBridge(deps: BridgeDeps): () => void {
     win.fetch = bridgedFetch;
   } catch {
     // A locked-down window: the dock still works, bb's composer keeps bb's path.
-    return () => undefined;
+    return { NativeMediaRecorder: NativeRecorder, uninstall: () => undefined };
   }
-  return () => {
-    if (win.MediaRecorder === BridgedMediaRecorder) win.MediaRecorder = NativeRecorder;
-    if (win.fetch === bridgedFetch) win.fetch = nativeFetch;
-    for (const upload of uploads.splice(0)) if (!upload.stopped) upload.cancel();
+  return {
+    NativeMediaRecorder: NativeRecorder,
+    uninstall: () => {
+      if (win.MediaRecorder === BridgedMediaRecorder) win.MediaRecorder = NativeRecorder;
+      if (win.fetch === bridgedFetch) win.fetch = nativeFetch;
+      for (const upload of uploads.splice(0)) if (!upload.stopped) upload.cancel();
+    },
   };
 }

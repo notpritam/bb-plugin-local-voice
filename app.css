@@ -27,6 +27,9 @@
 .bbw-dock[data-state="transcribing"] { cursor: progress; color: var(--primary, #2563eb); }
 .bbw-dock[data-state="transcribing"] svg { animation: bbw-spin 0.9s linear infinite; }
 .bbw-dock[data-state="error"] { color: var(--destructive, #dc2626); border-color: currentColor; animation: bbw-shake 0.3s ease; }
+/* A failure that kept the audio: the dock turns into a retry button. */
+.bbw-dock[data-state="error"].bbw-dock-retry { cursor: pointer; color: var(--destructive, #dc2626); background: color-mix(in srgb, var(--destructive, #dc2626) 10%, var(--background, #fff)); }
+.bbw-dock[data-state="error"].bbw-dock-retry:hover { background: color-mix(in srgb, var(--destructive, #dc2626) 18%, var(--background, #fff)); }
 @keyframes bbw-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
   50% { box-shadow: 0 0 0 6px transparent; }

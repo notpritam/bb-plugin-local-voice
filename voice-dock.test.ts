@@ -272,6 +272,59 @@ describe("mountVoiceDock", () => {
     await vi.waitFor(() => expect(dock()!.dataset.state).toBe("idle"));
   });
 
+  it("turns into a retry button when the failure kept the clip, and inserts the retried text", async () => {
+    const failure = Object.assign(new Error("router down"), { name: "TranscriptionFailed", clipId: 42 });
+    (recorder.stop as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure);
+    const retry = vi.fn(async (clipId: number) => `retried ${clipId}`);
+    mount({ retry, describeFailure: (e) => `${(e as Error).message} — click to retry` });
+    const area = el("textarea");
+    focus(area);
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("recording"));
+    now = 1000;
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("error"));
+    expect(dock()!.title).toBe("router down — click to retry");
+    expect(dock()!.classList.contains("bbw-dock-retry")).toBe(true);
+    expect(dock()!.disabled).toBe(false);
+    dock()!.click();
+    await vi.waitFor(() => expect(area.value).toBe("retried 42"));
+    expect(retry).toHaveBeenCalledWith(42, expect.any(AbortSignal));
+    expect(dock()!.dataset.state).toBe("idle");
+    expect(dock()!.classList.contains("bbw-dock-retry")).toBe(false);
+  });
+
+  it("the hotkey also retries, and a second failure keeps the retry offer", async () => {
+    const failure = Object.assign(new Error("router down"), { name: "TranscriptionFailed", clipId: 7 });
+    (recorder.stop as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure);
+    const retry = vi.fn(async () => { throw new Error("still down"); });
+    mount({ retry });
+    const area = el("textarea");
+    focus(area);
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("recording"));
+    now = 1000;
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("error"));
+    area.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(dock()!.title).toBe("still down"));
+    expect(dock()!.classList.contains("bbw-dock-retry")).toBe(true);
+  });
+
+  it("does not offer a retry without a retry dep or a clip id", async () => {
+    (recorder.stop as ReturnType<typeof vi.fn>).mockRejectedValueOnce(Object.assign(new Error("lost"), { clipId: null }));
+    mount({ retry: vi.fn() });
+    focus(el("textarea"));
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("recording"));
+    now = 1000;
+    dock()!.click();
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("error"));
+    expect(dock()!.classList.contains("bbw-dock-retry")).toBe(false);
+    await vi.waitFor(() => expect(dock()!.dataset.state).toBe("idle"));
+  });
+
   it("shows a microphone error when the recorder cannot start", async () => {
     mount({ createRecorder: async () => { throw Object.assign(new Error("denied"), { name: "NotAllowedError" }); } });
     focus(el("textarea"));

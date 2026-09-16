@@ -22,8 +22,9 @@ describe("isVoiceSupported", () => {
 });
 
 describe("describeFailure", () => {
-  it("points at History for a transcription failure and passes other errors through", () => {
-    expect(describeFailure(new TranscriptionFailed("Router down", 4))).toBe("Router down — saved in History, retry from the Voice panel.");
+  it("offers the click-to-retry when the clip was kept, points at History otherwise, passes other errors through", () => {
+    expect(describeFailure(new TranscriptionFailed("Router down", 4))).toBe("Router down — click the mic (or Ctrl+Shift+Space) to retry.");
+    expect(describeFailure(new TranscriptionFailed("Router down", null))).toBe("Router down — saved in History, retry from the Voice panel.");
     expect(describeFailure(new Error("mic broke"))).toBe("mic broke");
     expect(describeFailure("?")).toBe("Voice transcription failed");
   });
@@ -108,11 +109,11 @@ describe("createStreamingRecorder", () => {
     expect((calls[1]!.input as { data: string }).data).toBe(btoa("onetwotail"));
   });
 
-  it("explains a failed transcription and where the audio went", async () => {
+  it("rejects a failed transcription with the reason and the kept clip's id", async () => {
     FakeMediaRecorder.instances = [];
     const { rpc } = fakeRpc({ rec_result: [{ status: "failed", id: 3, message: "Speech recognition failed: router down" }] });
     const recorder = await createStreamingRecorder({ rpc, getUserMedia: async () => stream, MediaRecorderImpl: FakeMediaRecorder as unknown as typeof MediaRecorder });
-    await expect(recorder.stop(new AbortController().signal)).rejects.toThrow("Speech recognition failed: router down — saved in History, retry from the Voice panel.");
+    await expect(recorder.stop(new AbortController().signal)).rejects.toMatchObject({ name: "TranscriptionFailed", message: "Speech recognition failed: router down", clipId: 3 });
   });
 
   it("cancel stops the tracks and discards the server row", async () => {

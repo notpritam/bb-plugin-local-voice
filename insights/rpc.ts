@@ -140,5 +140,7 @@ export const recordingRpcContract = defineRpcContract({
     output: z.object({ clips: z.array(clipRowSchema), hasMore: z.boolean() }).strict(),
   },
   clip_retry: { input: z.object({ id: z.number().int() }).strict(), output: ack },
+  /** Long-polls a clip (by row id) the way rec_result does a recording; for retries started from the dock. */
+  clip_wait: { input: z.object({ id: z.number().int() }).strict(), output: recResultSchema },
   clip_delete: { input: z.object({ id: z.number().int() }).strict(), output: ack },
 });

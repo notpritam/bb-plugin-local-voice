@@ -56,7 +56,8 @@ describe("installComposerBridge", () => {
     const nativeFetch = vi.fn(async () => new Response("native"));
     const win = makeWindow(nativeFetch as unknown as typeof fetch);
     const { rpc, calls } = fakeRpc();
-    const uninstall = installComposerBridge({ win, rpc });
+    const bridge = installComposerBridge({ win, rpc });
+    expect(bridge.NativeMediaRecorder).toBe(FakeNativeRecorder);
 
     // bb creates its recorder exactly like before…
     const Recorder = win.MediaRecorder as unknown as typeof FakeNativeRecorder;
@@ -80,8 +81,21 @@ describe("installComposerBridge", () => {
     // Everything else still goes to the real fetch.
     await win.fetch("https://bb.local/api/v1/threads", { method: "GET" });
     expect(nativeFetch).toHaveBeenCalledTimes(1);
-    uninstall();
+    bridge.uninstall();
     expect(win.MediaRecorder).toBe(FakeNativeRecorder);
+  });
+
+  it("discards a bb recording nobody asks about after it stops (bb cancelled it or it was too short)", async () => {
+    const win = makeWindow(vi.fn() as unknown as typeof fetch);
+    const { rpc, calls } = fakeRpc();
+    installComposerBridge({ win, rpc, claimTimeoutMs: 20 });
+    const Recorder = win.MediaRecorder as unknown as typeof FakeNativeRecorder;
+    const recorder = new Recorder(audioStream, { mimeType: "audio/webm" });
+    recorder.start();
+    recorder.emit("one");
+    recorder.stop();
+    await vi.waitFor(() => expect(calls.map((c) => c.method)).toContain("rec_cancel"));
+    expect(calls.map((c) => c.method)).not.toContain("rec_finish");
   });
 
   it("sends the whole file when no bridged recorder matches, and shapes failures like bb's errors", async () => {

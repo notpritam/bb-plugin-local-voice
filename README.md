@@ -36,7 +36,7 @@ Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mi
 - **Composer:** click bb's mic, speak, click again. The result is inserted at the cursor. (bb's own transport has a 10 s cap and drops the audio on failure; the plugin quietly reroutes the composer's clip through its own streaming path, so neither applies.)
 - **Any other field:** focus it, press **Ctrl+Shift+Space** (or click the round mic at its corner), speak, press again. Dictation appends after the caret and never types over a selection.
 - **Silence** produces nothing (no hallucinated "you").
-- **Failed?** The dock says so and the clip is in the Voice panel's **History** tab with its audio and a **Retry** button. Talk as long as you like.
+- **Failed?** The dock turns into a red ↻: click it (or press Ctrl+Shift+Space again) to retry on the spot. The clip is also in the Voice panel's **History** tab with its audio and a **Retry** button. Talk as long as you like.
 
 ## Engines (`BB_TRANSCRIPTION`)
 

@@ -71,6 +71,27 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
     }
   }
 
+  /** Answer now when the clip is settled; otherwise hold the call until the `rec` signal lands (or RESULT_WAIT_MS). */
+  function waitFor(clip: ReturnType<InsightsStore["clip"]>): Promise<RecResultDto> {
+    if (clip === null) return Promise.resolve({ status: "failed", id: 0, message: "No recording with that id." });
+    if (clip.status === "done") return Promise.resolve({ status: "done", id: clip.id, text: clip.text });
+    if (clip.status === "failed") return Promise.resolve({ status: "failed", id: clip.id, message: clip.error ?? "Transcription failed." });
+    const uid = clip.uid ?? "";
+    return new Promise<RecResultDto>((resolve) => {
+      const set = waiters.get(uid) ?? new Set();
+      waiters.set(uid, set);
+      const timer = setTimeout(() => {
+        set.delete(done);
+        resolve({ status: "pending" });
+      }, RESULT_WAIT_MS);
+      const done = (outcome: Outcome) => {
+        clearTimeout(timer);
+        resolve(outcome);
+      };
+      set.add(done);
+    });
+  }
+
   function onRecSignal(payload: RecSignal): void {
     const clip = store.clipByUid(payload.id);
     if (clip === null) {
@@ -144,25 +165,8 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
       await host.call("recCancel", { id: uid }).catch(() => undefined);
       return { ok: true as const };
     },
-    rec_result: async ({ uid }): Promise<RecResultDto> => {
-      const clip = store.clipByUid(uid);
-      if (clip === null) return { status: "failed", id: 0, message: "No recording with that id." };
-      if (clip.status === "done") return { status: "done", id: clip.id, text: clip.text };
-      if (clip.status === "failed") return { status: "failed", id: clip.id, message: clip.error ?? "Transcription failed." };
-      return new Promise<RecResultDto>((resolve) => {
-        const set = waiters.get(uid) ?? new Set();
-        waiters.set(uid, set);
-        const timer = setTimeout(() => {
-          set.delete(done);
-          resolve({ status: "pending" });
-        }, RESULT_WAIT_MS);
-        const done = (outcome: Outcome) => {
-          clearTimeout(timer);
-          resolve(outcome);
-        };
-        set.add(done);
-      });
-    },
+    rec_result: async ({ uid }) => waitFor(store.clipByUid(uid)),
+    clip_wait: async ({ id }) => waitFor(store.clip(id)),
     rec_transcribe: async ({ uid, surface, mime, data }) => {
       if (store.clipByUid(uid) !== null) return { ok: false as const, message: "That recording id is already in use." };
       const at = now();

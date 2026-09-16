@@ -23,7 +23,9 @@ export function isVoiceSupported(win: Window = window): boolean {
 
 /** What a transcription failure says on the dock: the audio is safe, the retry is a click away. */
 export function describeFailure(error: unknown): string {
-  if (error instanceof TranscriptionFailed) return `${error.message} — saved in History, retry from the Voice panel.`;
+  if (error instanceof TranscriptionFailed) {
+    return error.clipId === null ? `${error.message} — saved in History, retry from the Voice panel.` : `${error.message} — click the mic (or Ctrl+Shift+Space) to retry.`;
+  }
   return error instanceof Error && error.message !== "" ? error.message : "Voice transcription failed";
 }
 
@@ -61,11 +63,8 @@ export async function createStreamingRecorder(deps: CaptureDeps): Promise<Record
     stop: async (signal) => {
       recorder.stop();
       await stopped;
-      try {
-        return (await upload.finish(signal)).text;
-      } catch (error) {
-        throw new Error(describeFailure(error));
-      }
+      // A TranscriptionFailed carries the clip id, which lets the dock offer a retry on the spot.
+      return (await upload.finish(signal)).text;
     },
     cancel: () => {
       recorder.onstop = null;

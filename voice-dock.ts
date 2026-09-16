@@ -19,12 +19,23 @@ export interface Recorder {
   cancel(): void;
 }
 
+/** A failure that kept the audio: `clipId` is the History row a retry can be started from. */
+export interface RetryableFailure extends Error {
+  clipId: number | null;
+}
+
 export interface DockDeps {
   signal: AbortSignal;
   createRecorder: () => Promise<Recorder>;
+  /** Transcribe a kept clip again; resolves to the text. Without it the dock only points at History. */
+  retry?: (clipId: number, signal: AbortSignal) => Promise<string>;
+  /** Turn a failure into the dock's tooltip. */
+  describeFailure?: (error: unknown) => string;
   doc?: Document;
   minDurationMs?: number;
   errorDisplayMs?: number;
+  /** A retryable failure stays on the dock this long, waiting for the click. */
+  retryDisplayMs?: number;
   now?: () => number;
 }
 
@@ -129,6 +140,11 @@ export function insertTextAtCursor(target: HTMLElement, text: string): void {
   target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: spaced }));
 }
 
+function failureClipId(error: unknown): number | null {
+  const id = (error as { clipId?: unknown } | null)?.clipId;
+  return typeof id === "number" ? id : null;
+}
+
 export function describeMicError(error: unknown): string {
   const name = error instanceof Error ? error.name : "";
   switch (name) {
@@ -161,12 +177,16 @@ const LABELS: Record<DockState, string> = {
   transcribing: "Transcribing…",
   error: "Voice input failed",
 };
+const RETRY_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>';
 
 export function mountVoiceDock(deps: DockDeps): () => void {
   const doc = deps.doc ?? document;
   const win = doc.defaultView ?? window;
   const minDurationMs = deps.minDurationMs ?? 300;
   const errorDisplayMs = deps.errorDisplayMs ?? 4000;
+  const retryDisplayMs = deps.retryDisplayMs ?? 20_000;
+  const describeFailure = deps.describeFailure ?? ((error: unknown) => (error instanceof Error && error.message !== "" ? error.message : "Voice transcription failed"));
   const now = deps.now ?? (() => Date.now());
   const abort = new AbortController();
 
@@ -174,6 +194,8 @@ export function mountVoiceDock(deps: DockDeps): () => void {
   let target: HTMLElement | null = null;
   let state: DockState = "idle";
   let recorder: Recorder | null = null;
+  /** The History row a click can retry while the dock shows the failure. */
+  let retryClipId: number | null = null;
   let startedAt = 0;
   let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let resizeObserver: ResizeObserver | null = null;
@@ -191,7 +213,7 @@ export function mountVoiceDock(deps: DockDeps): () => void {
     dock.setAttribute("aria-label", LABELS[next]);
     dock.title = title;
     dock.disabled = next === "transcribing";
-    dock.innerHTML = next === "recording" ? STOP_SVG : next === "transcribing" ? SPIN_SVG : MIC_SVG;
+    dock.innerHTML = next === "recording" ? STOP_SVG : next === "transcribing" ? SPIN_SVG : next === "error" && retryClipId !== null ? RETRY_SVG : MIC_SVG;
   }
   setState("idle");
 
@@ -227,17 +249,45 @@ export function mountVoiceDock(deps: DockDeps): () => void {
     dock.hidden = true;
   }
 
-  function showError(message: string): void {
+  function showError(message: string, clipId: number | null = null): void {
+    retryClipId = deps.retry === undefined ? null : clipId;
     setState("error", message);
+    dock.classList.toggle("bbw-dock-retry", retryClipId !== null);
     if (errorTimer !== null) clearTimeout(errorTimer);
     errorTimer = setTimeout(() => {
       errorTimer = null;
-      setState("idle");
-      if (target === null || !target.isConnected) {
-        target = null;
-        dock.hidden = true;
-      }
-    }, errorDisplayMs);
+      clearError();
+    }, retryClipId === null ? errorDisplayMs : retryDisplayMs);
+  }
+
+  function clearError(): void {
+    retryClipId = null;
+    dock.classList.remove("bbw-dock-retry");
+    setState("idle");
+    if (target === null || !target.isConnected) {
+      target = null;
+      dock.hidden = true;
+    }
+  }
+
+  async function retry(): Promise<void> {
+    const clipId = retryClipId;
+    const run = deps.retry;
+    if (clipId === null || run === undefined || state !== "error") return;
+    if (errorTimer !== null) clearTimeout(errorTimer);
+    errorTimer = null;
+    retryClipId = null;
+    dock.classList.remove("bbw-dock-retry");
+    setState("transcribing");
+    try {
+      const text = (await run(clipId, abort.signal)).trim();
+      if (disposed) return;
+      if (text !== "" && target !== null && target.isConnected) insertTextAtCursor(target, text);
+      finish();
+    } catch (error) {
+      if (disposed) return;
+      showError(describeFailure(error), failureClipId(error) ?? clipId);
+    }
   }
 
   async function start(): Promise<void> {
@@ -274,7 +324,7 @@ export function mountVoiceDock(deps: DockDeps): () => void {
       finish();
     } catch (error) {
       if (disposed) return;
-      showError(error instanceof Error && error.message !== "" ? error.message : "Voice transcription failed");
+      showError(describeFailure(error), failureClipId(error));
     }
   }
 
@@ -289,6 +339,7 @@ export function mountVoiceDock(deps: DockDeps): () => void {
   function toggle(): void {
     if (state === "idle") void start();
     else if (state === "recording") void stop();
+    else if (state === "error" && retryClipId !== null) void retry();
   }
 
   const onFocusIn = (event: FocusEvent) => {

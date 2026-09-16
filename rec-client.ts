@@ -209,3 +209,19 @@ export class RecordingUpload {
     void this.started.then((ok) => (ok ? this.rpc.call("rec_cancel", { uid: this.uid }).catch(() => undefined) : undefined));
   }
 }
+
+/** Transcribe a kept clip again and wait for the text (the dock's retry). */
+export async function retryClip(rpc: RpcTransport, clipId: number, signal?: AbortSignal): Promise<string> {
+  const started = await rpc.call<{ ok: boolean; message?: string }>("clip_retry", { id: clipId }).catch((error: unknown) => {
+    throw new TranscriptionFailed(error instanceof Error ? error.message : String(error), clipId);
+  });
+  if (!started.ok) throw new TranscriptionFailed(started.message ?? "Could not retry.", clipId);
+  const deadline = Date.now() + RESULT_POLL_CEILING_MS;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw abortError();
+    const result = await raceAbort(rpc.call<RecResultDto>("clip_wait", { id: clipId }, signal), signal);
+    if (result.status === "done") return result.text;
+    if (result.status === "failed") throw new TranscriptionFailed(result.message, clipId);
+  }
+  throw new TranscriptionFailed("Gave up waiting for the transcription; it stays in History.", clipId);
+}

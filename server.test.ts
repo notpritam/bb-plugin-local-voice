@@ -354,7 +354,10 @@ describe("recordings", () => {
 
     expect(await harness.behavior.callRpc("clip_retry", { id: 1 })).toEqual({ ok: true });
     expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "recTranscribe", input: { id: uid, mime: "audio/webm", data: Buffer.from("xyz").toString("base64") } });
+    // The dock waits on the row id rather than the recording uid.
+    const waiting = harness.behavior.callRpc("clip_wait", { id: 1 });
     await harness.behavior.experimental_emitHostSignal("host-1", "rec", recOk({ text: "Second time lucky." }));
+    expect(await waiting).toEqual({ status: "done", id: 1, text: "Second time lucky." });
     const history = (await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })) as { clips: { status: string; text: string; attempts: number }[] };
     expect(history.clips[0]).toMatchObject({ status: "done", text: "Second time lucky.", attempts: 2 });
   });
