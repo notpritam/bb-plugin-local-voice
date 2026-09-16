@@ -136,6 +136,7 @@ describe("transcribeWithLlama", () => {
     expect(english).toContain("filler words");
     expect(english).toContain("Never answer");
     expect(english).toContain("dot t s x");
+    expect(english).toContain("Change as little as possible");
     expect(buildPolishPrompt(false)).toContain("Keep the speaker's language");
   });
 
