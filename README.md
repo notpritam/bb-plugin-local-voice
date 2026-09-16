@@ -5,7 +5,7 @@
 Speak into any text box in [bb](https://getbb.app) and get clean, written text back — recognised and polished entirely on your own machine, in any language, out as English.
 
 - **Recognition:** Qwen3-ASR-1.7B (Alibaba, Apache-2.0) via `llama-server`. Hindi, Hinglish, English and 50+ languages; character-perfect on code-switched speech where Whisper stumbles.
-- **Polish:** Gemma 4 E4B rewrites the dictation like a transcriptionist — fillers and false starts out, punctuation, numbers, lists, spelled-out file extensions (`dot t s x` → `.tsx`), identifiers kept — and renders non-English speech in English (switchable).
+- **Polish:** Gemma 4 rewrites the dictation like a transcriptionist — fillers and false starts out, punctuation, numbers, lists, spelled-out file extensions (`dot t s x` → `.tsx`), identifiers kept — and renders non-English speech in English (switchable). On a 32 GB+ box that is **Gemma 4 26B-A4B** (MoE: 4B active, so as fast as the small model on a CPU, far stronger); otherwise Gemma 4 E4B.
 - **Everywhere:** bb's composer mic just works; a small round mic docks to every other text field (Ctrl+Shift+Space).
 - **Instant, any length:** audio streams to the host *while you talk* and is recognised in ~5 s chunks on four llama-server slots; when you stop, only the last chunk and one short polish remain. No timeout, no length limit.
 - **Audio first:** every clip is kept from its first slice. A failed transcription shows in **History** with a Retry button; Play, Copy, Transcribe again and Delete are there too.
@@ -14,7 +14,7 @@ Speak into any text box in [bb](https://getbb.app) and get clean, written text b
 
 Measured on a 20-core CPU with no GPU: the text lands ~2 s after you stop for a 9 s Hinglish take, and ~3 s for a 60 s one (the old whole-clip path took 15 s for the latter).
 
-## Install (10 minutes, ~5 GB of models)
+## Install (10 minutes; ~5 GB of models, ~20 GB with the heavy polisher)
 
 On the machine that runs your bb primary host daemon:
 
@@ -27,7 +27,7 @@ bb-app config set BB_TRANSCRIPTION local/qwen3-asr
 bb voice transcribe some-clip.wav                 # smoke test
 ```
 
-`setup.sh` is idempotent. Arch Linux is automated (`pacman`); on other systems install `llama.cpp` and `ffmpeg` first and re-run. It needs about 5 GB in `~/.bb/local-voice`.
+`setup.sh` is idempotent. Arch Linux is automated (`pacman`); on other systems install `llama.cpp` and `ffmpeg` first and re-run. It picks the polisher tier from RAM — **heavy** (Gemma 4 26B-A4B, ~16 GB resident, 14.5 GB download) at 32 GB+, **light** (Gemma 4 E4B) below — and sets the plugin's `polishModel` to match; force one with `./host/setup.sh --light` or `--heavy`. Budget 5 GB (light) or 20 GB (heavy) in `~/.bb/local-voice`.
 
 Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mic appears on every text field.
 
@@ -55,7 +55,7 @@ Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mi
 | `serverUrl` | `http://127.0.0.1:8091` | llama-server router |
 | `polish` | `true` | run the polisher on every clip |
 | `translate` | `true` | polisher outputs English (off = keep the spoken language) |
-| `polishModel` | `gemma-4-e4b` | router alias of the polisher (`gemma-4-e2b` is smaller, not faster) |
+| `polishModel` | `gemma-4-e4b` | router alias of the polisher; `setup.sh` sets `gemma-4-26b` on the heavy tier (`gemma-4-e2b` is smaller, not faster) |
 | `asrModel` | `qwen3-asr` | recogniser for the mic dock, the composer and retries (`qwen3-asr-0.6b` is 2× faster, weaker on Hinglish) |
 | `audioRetentionDays` | `30` | keep the audio of finished clips this long (`0` = forever); failed clips keep theirs until retried or deleted |
 | `leaderboard` | `false` | join the public leaderboard |

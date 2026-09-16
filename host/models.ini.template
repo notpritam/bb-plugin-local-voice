@@ -20,13 +20,25 @@ np = 4
 c = 16384
 load-on-startup = false
 
-; Dictation polisher (Google Gemma 4 E4B instruct, Q4_0, MTP speculative decoding, thinking off)
+; Dictation polisher, heavy tier: Gemma 4 26B-A4B (MoE, 4B active — same speed as E4B on a CPU,
+; far stronger), Google QAT Q4_K_XL, MTP speculative decoding, thinking off. ~16 GB RAM.
+[gemma-4-26b]
+model = __DIR__/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
+spec-type = draft-mtp
+model-draft = __DIR__/mtp-gemma-4-26B-A4B-it-Q4_0.gguf
+c = 4096
+np = 2
+reasoning-budget = 0
+load-on-startup = __HEAVY_ON__
+
+; Dictation polisher, light tier (Google Gemma 4 E4B instruct, Q4_0, MTP speculative decoding, thinking off)
 [gemma-4-e4b]
 model = __DIR__/gemma-4-E4B-it-Q4_0.gguf
 spec-type = draft-mtp
 model-draft = __DIR__/mtp-gemma-4-E4B-it-Q4_0.gguf
 c = 4096
 reasoning-budget = 0
+load-on-startup = __LIGHT_ON__
 
 ; Faster/smaller polisher alternative (loads on first use)
 [gemma-4-e2b]
