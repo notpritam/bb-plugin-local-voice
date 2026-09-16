@@ -89,3 +89,56 @@ export const insightsRpcContract = defineRpcContract({
   insights_voice: { input: z.null(), output: voiceReportSchema },
   insights_regenerate: { input: z.null(), output: z.object({ ok: z.boolean(), message: z.string().optional() }).strict() },
 });
+
+// ---- Recordings (the plugin's own path: no bb timeout, audio kept, retry) and history.
+const uid = z.string().regex(/^[a-z0-9-]{8,64}$/u);
+const surface = z.enum(["composer", "field", "cli", "other"]);
+const ack = z.union([z.object({ ok: z.literal(true) }).strict(), z.object({ ok: z.literal(false), message: z.string() }).strict()]);
+const started = z.union([z.object({ ok: z.literal(true), id: z.number() }).strict(), z.object({ ok: z.literal(false), message: z.string() }).strict()]);
+export const clipRowSchema = z.object({
+  id: z.number(),
+  uid: z.string().nullable(),
+  at: z.number(),
+  day: z.string(),
+  surface,
+  language: z.string().nullable(),
+  durationMs: z.number(),
+  rawText: z.string(),
+  text: z.string(),
+  words: z.number(),
+  fixes: z.number(),
+  translated: z.boolean(),
+  polished: z.boolean(),
+  asrMs: z.number().nullable(),
+  polishMs: z.number().nullable(),
+  model: z.string(),
+  status: z.enum(["recording", "transcribing", "done", "failed"]),
+  error: z.string().nullable(),
+  mime: z.string().nullable(),
+  attempts: z.number(),
+  audioBytes: z.number(),
+});
+export type ClipRowDto = z.infer<typeof clipRowSchema>;
+export const recResultSchema = z.union([
+  z.object({ status: z.literal("pending") }).strict(),
+  z.object({ status: z.literal("done"), id: z.number(), text: z.string() }).strict(),
+  z.object({ status: z.literal("failed"), id: z.number(), message: z.string() }).strict(),
+]);
+export type RecResultDto = z.infer<typeof recResultSchema>;
+
+export const recordingRpcContract = defineRpcContract({
+  rec_start: { input: z.object({ uid, surface, mime: z.string().min(1).max(100) }).strict(), output: started },
+  rec_append: { input: z.object({ uid, seq: z.number().int().nonnegative(), data: z.string().max(2_800_000) }).strict(), output: ack },
+  rec_finish: { input: z.object({ uid }).strict(), output: ack },
+  rec_cancel: { input: z.object({ uid }).strict(), output: ack },
+  /** Long-polls up to ~25 s for the outcome; call again on `pending`. */
+  rec_result: { input: z.object({ uid }).strict(), output: recResultSchema },
+  /** A whole clip at once (the fallback when slices could not be streamed). */
+  rec_transcribe: { input: z.object({ uid, surface, mime: z.string().min(1).max(100), data: z.string().max(12_000_000) }).strict(), output: started },
+  history_list: {
+    input: z.object({ before: z.number().nullable(), limit: z.number().int().min(1).max(200), query: z.string().max(200).nullable() }).strict(),
+    output: z.object({ clips: z.array(clipRowSchema), hasMore: z.boolean() }).strict(),
+  },
+  clip_retry: { input: z.object({ id: z.number().int() }).strict(), output: ack },
+  clip_delete: { input: z.object({ id: z.number().int() }).strict(), output: ack },
+});

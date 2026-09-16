@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { loadPluginApp, mountPluginContentScripts, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOCK_ATTR } from "./voice-dock";
 
 function enableVoiceGlobals() {
   Object.defineProperty(window, "isSecureContext", { value: true, configurable: true });
-  Object.defineProperty(window, "MediaRecorder", { value: class {}, configurable: true });
+  Object.defineProperty(window, "MediaRecorder", { value: class {}, configurable: true, writable: true });
   Object.defineProperty(window.navigator, "mediaDevices", { value: { getUserMedia: async () => ({}) }, configurable: true });
 }
 
@@ -54,7 +54,8 @@ describe("Voice page", () => {
   it("registers the nav panel and renders the usage report", async () => {
     const app = await loadPluginApp(() => import("./app"));
     expect(app.navPanels.map((p) => ({ id: p.id, path: p.path }))).toEqual([{ id: "voice", path: "voice" }]);
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }) } });
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), history_list: () => ({ clips: [], hasMore: false }) } });
+    (await slot.findByText("Your usage")).click();
     await slot.findByText("12,345");
     await slot.findByText("152");
     expect(slot.getByText(/Top 10%/)).toBeTruthy();
@@ -72,7 +73,7 @@ describe("Your voice tab", () => {
       profile: { generatedAt: 1, title: "Context Clarifier", description: "You dictate plans.", catchphrase: "commit and push this", peakTitle: "Thursday at 12 a.m.", peakDescription: "Late nights.", mostUsedWord: "deploy", mostCorrectedWord: "like" },
       wordsTotal: 3200, wordsUntilNext: 800, generating: false,
     };
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), insights_voice: () => voice, insights_regenerate: () => ({ ok: true }) } });
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), insights_voice: () => voice, insights_regenerate: () => ({ ok: true }), history_list: () => ({ clips: [], hasMore: false }) } });
     (await slot.findByText("Your voice")).click();
     await slot.findByText("Context Clarifier");
     expect(slot.getByText(/commit and push this/)).toBeTruthy();
@@ -93,7 +94,7 @@ describe("Leaderboard tab", () => {
     ];
     const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
       rpc: {
-        insights_usage: () => report, insights_clear: () => ({ ok: true }),
+        insights_usage: () => report, insights_clear: () => ({ ok: true }), history_list: () => ({ clips: [], hasMore: false }),
         leaderboard_status: () => ({ enabled: true, joined: true, memberId: "me", displayName: "Pritam Sharma", url: "https://x", lastReportAt: null, lastError: null }),
         leaderboard_board: () => ({ period: "week", total: 4, offset: 0, members, me: members[3] }),
         leaderboard_join: () => ({ ok: true }), leaderboard_leave: () => ({ ok: true }),
@@ -108,6 +109,43 @@ describe("Leaderboard tab", () => {
     expect(slot.getByText(/Pritam Sharma \(you\)/)).toBeTruthy();
     expect(slot.getByText("↑9")).toBeTruthy();
     expect(slot.getByText(/1-4 of 4/)).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("History tab", () => {
+  const today = new Date();
+  const day = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  const base = { uid: "clip-x", surface: "field", language: "Hindi", durationMs: 4000, rawText: "raw", words: 3, fixes: 0, translated: true, polished: true, asrMs: 1, polishMs: 1, model: "qwen3-asr", mime: "audio/webm", attempts: 1, audioBytes: 100 } as const;
+  const clips = [
+    { ...base, id: 3, at: today.getTime(), day: day(today), text: "", status: "transcribing", error: null },
+    { ...base, id: 2, at: today.getTime() - 60_000, day: day(today), text: "", status: "failed", error: "Speech recognition failed: router down", attempts: 2 },
+    { ...base, id: 1, at: yesterday.getTime(), day: day(yesterday), text: "The deploy failed yesterday.", status: "done", error: null },
+  ];
+
+  it("groups clips by day and offers retry on failures", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const retry = vi.fn(() => ({ ok: true }));
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+      rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), history_list: () => ({ clips, hasMore: true }), clip_retry: retry, clip_delete: () => ({ ok: true }) },
+    });
+    await slot.findByText("Today");
+    expect(slot.getByText("Yesterday")).toBeTruthy();
+    expect(slot.getByText("The deploy failed yesterday.")).toBeTruthy();
+    expect(slot.getByText(/Transcribing…/)).toBeTruthy();
+    expect(slot.getByText(/router down/)).toBeTruthy();
+    expect(slot.getByText(/attempt 2/)).toBeTruthy();
+    expect(slot.getByText("Load more")).toBeTruthy();
+    slot.getByText("Retry").click();
+    await vi.waitFor(() => expect(retry).toHaveBeenCalledWith({ id: 2 }));
+    slot.lifecycle.unmount();
+  });
+
+  it("shows the empty state", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc: { insights_usage: () => report, insights_clear: () => ({ ok: true }), history_list: () => ({ clips: [], hasMore: false }) } });
+    await slot.findByText("Nothing recorded yet");
     slot.lifecycle.unmount();
   });
 });

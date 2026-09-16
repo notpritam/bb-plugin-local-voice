@@ -26,8 +26,8 @@ const blur = (node: HTMLElement, relatedTarget: Element | null = null) => {
   if (relatedTarget === null) node.blur();
 };
 
-function fakeRecorder(file = new File(["x"], "recording.webm", { type: "audio/webm" })) {
-  const recorder: Recorder = { stop: vi.fn(async () => file), cancel: vi.fn() };
+function fakeRecorder(text = "spoken text") {
+  const recorder: Recorder = { stop: vi.fn(async () => text), cancel: vi.fn() };
   return recorder;
 }
 
@@ -157,12 +157,10 @@ describe("insertTextAtCursor", () => {
 
 describe("mountVoiceDock", () => {
   let controller: AbortController;
-  let transcribe: ReturnType<typeof vi.fn<(file: File, signal: AbortSignal) => Promise<string>>>;
   let recorder: Recorder;
   let now: number;
   beforeEach(() => {
     controller = new AbortController();
-    transcribe = vi.fn(async () => "spoken text");
     recorder = fakeRecorder();
     now = 0;
   });
@@ -170,7 +168,6 @@ describe("mountVoiceDock", () => {
     dispose = mountVoiceDock({
       signal: controller.signal,
       createRecorder: async () => recorder,
-      transcribe,
       minDurationMs: 300,
       errorDisplayMs: 50,
       now: () => now,
@@ -220,7 +217,7 @@ describe("mountVoiceDock", () => {
     dock()!.click();
     await vi.waitFor(() => expect(dock()!.dataset.state).toBe("idle"));
     expect(recorder.stop).toHaveBeenCalledTimes(1);
-    expect(transcribe).toHaveBeenCalledTimes(1);
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
     expect(area.value).toBe("note: spoken text");
   });
 
@@ -245,7 +242,8 @@ describe("mountVoiceDock", () => {
     now = 100;
     dock()!.click();
     await vi.waitFor(() => expect(dock()!.dataset.state).toBe("idle"));
-    expect(transcribe).not.toHaveBeenCalled();
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(recorder.cancel).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the dock visible while recording even if the target blurs, and still inserts", async () => {
@@ -262,7 +260,7 @@ describe("mountVoiceDock", () => {
   });
 
   it("shows the transcription error on the dock, then returns to idle", async () => {
-    transcribe.mockRejectedValueOnce(new Error("Voice transcription is temporarily unavailable"));
+    (recorder.stop as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Voice transcription is temporarily unavailable"));
     mount();
     focus(el("textarea"));
     dock()!.click();

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildPolishPrompt, parseAsrText, selectEngine, transcribeWithLlama } from "./engine";
+import { PCM_BYTES_PER_MS, pcmToWav } from "./stream";
+
+/** One second of audible tone as a 16 kHz wav. */
+function toneWav(ms = 1000): Buffer {
+  const pcm = Buffer.alloc(ms * PCM_BYTES_PER_MS);
+  for (let i = 0; i < pcm.length / 2; i += 1) pcm.writeInt16LE(Math.round(Math.sin(i / 3) * 8000), i * 2);
+  return pcmToWav(pcm);
+}
 
 describe("parseAsrText", () => {
   it("strips llama.cpp's language prefix and returns the detected language", () => {
@@ -24,7 +32,7 @@ describe("selectEngine", () => {
 });
 
 describe("transcribeWithLlama", () => {
-  const wav = Buffer.from("RIFFfake");
+  const wav = toneWav();
   function fakeFetch(handlers: { asr?: (init: RequestInit) => Response; chat?: (body: unknown) => Response }) {
     const calls: { url: string; body: unknown }[] = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

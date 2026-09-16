@@ -21,7 +21,7 @@ afterEach(async () => {
 
 function deps(run: Runner, overrides: Partial<Parameters<typeof transcribeAudio>[1]> = {}) {
   return {
-    config: { modelsDir, threads: 4, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" },
+    config: { modelsDir, threads: 4, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" },
     homeDir: root,
     tempRoot: path.join(root, "tmp"),
     run,
@@ -95,7 +95,7 @@ describe("transcribeAudio", () => {
     const run = vi.fn<Runner>(async () => ok("x"));
     const result = await transcribeAudio(
       request(),
-      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" } }),
+      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" } }),
     );
     expect(result.ok).toBe(true);
     expect(run.mock.calls[1]![1]).toContain(path.join(root, "home-models", "ggml-small.bin"));
@@ -182,10 +182,10 @@ describe("transcribeAudio", () => {
 
 describe("transcribeAudio via llama-server", () => {
   const wavBytes = () => {
-    const data = Buffer.alloc(8);
-    data.writeInt16LE(20000, 0);
-    data.writeInt16LE(-20000, 2);
-    const header = Buffer.from("RIFF\x2c\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x08\x00\x00\x00", "binary");
+    // One audible second: the silence gate lets it through and the session cuts a single chunk.
+    const data = Buffer.alloc(32000);
+    for (let i = 0; i < 16000; i += 1) data.writeInt16LE(Math.round(Math.sin(i / 3) * 8000), i * 2);
+    const header = Buffer.from("RIFF\x24\x7d\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00\x02\x00\x10\x00data\x00\x7d\x00\x00", "binary");
     return Buffer.concat([header, data]);
   };
   const ffmpegWritesWav = vi.fn<Runner>(async (cmd, args) => {
@@ -201,7 +201,7 @@ describe("transcribeAudio via llama-server", () => {
       if (String(url).endsWith("/v1/audio/transcriptions")) {
         const form = init?.body as FormData;
         expect(form.get("model")).toBe("qwen3-asr");
-        expect((form.get("file") as File).size).toBe(52);
+        expect((form.get("file") as File).size).toBe(32044);
         return new Response(JSON.stringify({ text: "language English<asr_text>hi there" }));
       }
       throw new Error("unexpected " + String(url));
@@ -211,7 +211,7 @@ describe("transcribeAudio via llama-server", () => {
       ok: true,
       model: "qwen3-asr",
       text: "hi there",
-      details: { rawText: "hi there", language: "English", polished: false, translated: false, durationMs: 0, asrMs: expect.any(Number), polishMs: null, engine: "llama" },
+      details: { rawText: "hi there", language: "English", polished: false, translated: false, durationMs: 1000, asrMs: expect.any(Number), polishMs: null, engine: "llama" },
     });
     expect(ffmpegWritesWav.mock.calls.map((c) => c[0])).toEqual(["ffmpeg"]);
   });

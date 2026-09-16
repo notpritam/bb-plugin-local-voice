@@ -1,19 +1,15 @@
-// Browser-side adapters for the dock: microphone capture and bb's endpoint.
+// Browser-side adapters for the dock: microphone capture that streams its
+// slices to the plugin while recording.
+import { RecordingUpload, TranscriptionFailed, type RpcTransport, type Surface } from "./rec-client";
 import type { Recorder } from "./voice-dock";
 
 export const MIME_PREFERENCE = ["audio/webm", "audio/mp4", "audio/ogg"] as const;
-const ENDPOINT = "/api/v1/system/voice-transcription";
+/** MediaRecorder hands over a slice this often; each goes straight to the server. */
+export const SLICE_MS = 1000;
 
 export function pickMimeType(isSupported: (mimeType: string) => boolean): string | null {
   for (const mimeType of MIME_PREFERENCE) if (isSupported(mimeType)) return mimeType;
   return null;
-}
-
-export function fileNameFor(mimeType: string): string {
-  const base = mimeType.split(";")[0] ?? "";
-  const ext = base.includes("ogg") ? "ogg" : base.includes("mp4") ? "mp4" : "webm";
-  // `bb-dock.*` lets the host tell dock clips from bb's own composer (`recording.*`).
-  return `bb-dock.${ext}`;
 }
 
 export function isVoiceSupported(win: Window = window): boolean {
@@ -25,67 +21,62 @@ export function isVoiceSupported(win: Window = window): boolean {
   );
 }
 
-export async function createMediaRecorder(): Promise<Recorder> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const mimeType = pickMimeType((candidate) => MediaRecorder.isTypeSupported(candidate));
-  const recorder = mimeType === null ? new MediaRecorder(stream) : new MediaRecorder(stream, { mimeType });
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
+/** What a transcription failure says on the dock: the audio is safe, the retry is a click away. */
+export function describeFailure(error: unknown): string {
+  if (error instanceof TranscriptionFailed) return `${error.message} — saved in History, retry from the Voice panel.`;
+  return error instanceof Error && error.message !== "" ? error.message : "Voice transcription failed";
+}
+
+export interface CaptureDeps {
+  rpc: RpcTransport;
+  surface?: Surface;
+  getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+  MediaRecorderImpl?: typeof MediaRecorder;
+}
+
+export async function createStreamingRecorder(deps: CaptureDeps): Promise<Recorder> {
+  const getUserMedia = deps.getUserMedia ?? ((c) => navigator.mediaDevices.getUserMedia(c));
+  const Impl = deps.MediaRecorderImpl ?? MediaRecorder;
+  const stream = await getUserMedia({ audio: true });
+  const mimeType = pickMimeType((candidate) => Impl.isTypeSupported(candidate));
+  const recorder = mimeType === null ? new Impl(stream) : new Impl(stream, { mimeType });
+  const upload = new RecordingUpload(deps.rpc, deps.surface ?? "field", recorder.mimeType || mimeType || "audio/webm");
+  recorder.ondataavailable = (event) => upload.append(event.data);
   const stopTracks = () => {
     for (const track of stream.getTracks()) track.stop();
   };
-  recorder.start();
+  const stopped = new Promise<void>((resolve, reject) => {
+    recorder.onstop = () => {
+      stopTracks();
+      upload.markStopped();
+      resolve();
+    };
+    recorder.onerror = () => {
+      stopTracks();
+      reject(new Error("Voice recording failed"));
+    };
+  });
+  recorder.start(SLICE_MS);
   return {
-    stop: () =>
-      new Promise<File>((resolve, reject) => {
-        recorder.onstop = () => {
-          stopTracks();
-          const type = recorder.mimeType || mimeType || "audio/webm";
-          resolve(new File(chunks, fileNameFor(type), { type }));
-        };
-        recorder.onerror = () => {
-          stopTracks();
-          reject(new Error("Voice recording failed"));
-        };
-        recorder.stop();
-      }),
+    stop: async (signal) => {
+      recorder.stop();
+      await stopped;
+      try {
+        return (await upload.finish(signal)).text;
+      } catch (error) {
+        throw new Error(describeFailure(error));
+      }
+    },
     cancel: () => {
       recorder.onstop = null;
+      recorder.ondataavailable = null;
       try {
         if (recorder.state !== "inactive") recorder.stop();
       } catch {
         // already stopped
       }
       stopTracks();
+      upload.cancel();
     },
   };
-}
-
-/** Same endpoint bb's own composer mic uses, so `BB_TRANSCRIPTION` decides the backend. */
-export async function transcribeViaBb(
-  file: File,
-  signal: AbortSignal,
-  fetchImpl: typeof fetch = fetch,
-): Promise<string> {
-  const body = new FormData();
-  body.set("file", file, file.name);
-  const response = await fetchImpl(ENDPOINT, { method: "POST", body, credentials: "same-origin", signal });
-  if (!response.ok) {
-    let message = `Voice transcription failed (${response.status})`;
-    try {
-      const json: unknown = await response.json();
-      if (json !== null && typeof json === "object" && typeof (json as { message?: unknown }).message === "string") {
-        message = (json as { message: string }).message;
-      }
-    } catch {
-      // keep the status message
-    }
-    throw new Error(message);
-  }
-  const json: unknown = await response.json();
-  const text = json !== null && typeof json === "object" ? (json as { text?: unknown }).text : undefined;
-  if (typeof text !== "string") throw new Error("Voice transcription returned no text");
-  return text;
 }

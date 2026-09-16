@@ -5,6 +5,7 @@ import { FIRST_PROFILE_WORDS, SAMPLE_CLIPS, isProfileDue, sampleTexts, statsSumm
 import { insightsRpcContract, leaderboardRpcContract } from "./insights/rpc.js";
 import { RateLimiter, hashToken, isoWeekRange, newInviteCode, newMemberId, newToken, previousIsoWeekRange, rankMembers, sanitizeName, validateReportDays } from "./insights/leaderboard.js";
 import { boardRemote, joinRemote, lbFetch, leaveRemote, reportRemote } from "./insights/lb-client.js";
+import { registerRecordings } from "./insights/recordings.js";
 import { migrate } from "./insights/schema.js";
 import { InsightsStore } from "./insights/store.js";
 import { mostCorrectedWord, topWords } from "./insights/text.js";
@@ -43,6 +44,16 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Polisher model alias on the router",
       default: DEFAULT_CONFIG.polishModel,
+    },
+    asrModel: {
+      type: "string",
+      label: "Recogniser model alias on the router (mic dock, composer, retries)",
+      default: DEFAULT_CONFIG.asrModel,
+    },
+    audioRetentionDays: {
+      type: "string",
+      label: "Keep the audio of finished clips for this many days (0 = forever)",
+      default: "30",
     },
     modelsDir: {
       type: "string",
@@ -105,6 +116,27 @@ export default async function plugin(bb: BbPluginApi) {
     store.insertClip(clip);
     bb.realtime.publish("voice-clip", { words: clip.words, day: clip.day });
   });
+
+  // ---- Recordings: the plugin's own path (mic dock, bb's composer via the bridge, retries).
+  async function primaryHost(): Promise<string> {
+    const { primaryHostId } = await bb.sdk.system.config();
+    if (primaryHostId === null) throw new Error("no primary host is connected");
+    return primaryHostId;
+  }
+  const recordings = registerRecordings({
+    bb,
+    store,
+    host: {
+      call: async (method, input) => host.call(method, input as never, { hostId: await primaryHost() }) as Promise<{ ok: boolean; message?: string }>,
+    },
+    asrModel: async () => (await currentConfig()).asrModel,
+    retentionDays: async () => {
+      const raw = (await settings.get()).audioRetentionDays;
+      const days = typeof raw === "string" ? Number.parseInt(raw, 10) : Number.NaN;
+      return Number.isFinite(days) && days >= 0 ? days : 30;
+    },
+  });
+  host.experimental_onSignal("rec", ({ payload }) => recordings.onRecSignal(payload));
 
   // ---- Voice profile: an LLM-written persona refreshed every REFRESH_WORDS words.
   let generating = false;

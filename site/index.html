@@ -39,7 +39,7 @@
           <a class="button button-primary" href="#install">Install in bb</a>
           <a class="button" href="#leaderboard">See who's dictating</a>
         </div>
-        <p class="hero-facts">Measured on a 20-core CPU with no GPU: an eight-second Hinglish take comes back as English in about three seconds.</p>
+        <p class="hero-facts">Measured on a 20-core CPU with no GPU: the English lands about two seconds after you stop talking — for an eight-second take or a sixty-second one, because recognition runs while you speak.</p>
       </div>
 
       <figure class="demo" aria-label="A dictation being recognised and polished">
@@ -68,19 +68,19 @@
       <ol class="steps">
         <li>
           <h3>Record</h3>
-          <p>Click the mic in bb's composer, or focus any other field and press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>. The browser records; the clip goes to your bb host.</p>
+          <p>Click the mic in bb's composer, or focus any other field and press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>. The browser records and streams every second of audio to your bb host as it happens, where it is kept from the first slice.</p>
         </li>
         <li>
           <h3>Recognise</h3>
-          <p>Qwen3-ASR 1.7B, kept warm by llama.cpp, transcribes the speech in its own language. Hindi, Hinglish and English are all first-class; silence is dropped instead of hallucinated.</p>
+          <p>While you are still talking, the speech is cut at pauses into ~5 s chunks and Qwen3-ASR 1.7B transcribes them four at a time in their own language. Hindi, Hinglish and English are all first-class; silence is dropped instead of hallucinated. No timeout, no length limit.</p>
         </li>
         <li>
           <h3>Polish</h3>
-          <p>Gemma 4 E4B rewrites it like a transcriptionist: fillers and false starts out, punctuation and lists in, <code>dot t s x</code> becomes <code>.tsx</code>, identifiers stay as spoken, and non-English is rendered in English.</p>
+          <p>Each finished thought — a run of chunks ending at a long pause — goes to Gemma 4 E4B as soon as it is recognised. It rewrites it like a transcriptionist: fillers and false starts out, punctuation and lists in, <code>dot t s x</code> becomes <code>.tsx</code>, identifiers stay as spoken, and non-English is rendered in English.</p>
         </li>
         <li>
           <h3>Insert</h3>
-          <p>The text appears at your caret. It never types over a selection, and it adds the space you would have typed.</p>
+          <p>When you stop, only the last chunk and one short polish remain, and the text appears at your caret about two seconds later. It never types over a selection, and it adds the space you would have typed.</p>
         </li>
       </ol>
     </section>
@@ -91,6 +91,10 @@
         <div>
           <h3>A mic on every field</h3>
           <p>bb's composer already has one. Local Voice docks a second, smaller mic to settings fields, plugin panels, search boxes and any other place you can type.</p>
+        </div>
+        <div>
+          <h3>History, with the audio</h3>
+          <p>Every clip is listed in the Voice panel with its recording: play it back, copy the text, transcribe it again. If a model call ever fails, the clip is still there with a Retry button — audio is never lost.</p>
         </div>
         <div>
           <h3>Insights</h3>

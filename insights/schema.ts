@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS clips (
@@ -77,6 +77,25 @@ CREATE TABLE IF NOT EXISTS lb_events (
 CREATE INDEX IF NOT EXISTS lb_events_at ON lb_events(at);
 `;
 
+// v3: recordings are rows from the moment they start; the audio is kept beside them.
+const DDL_V3 = `
+CREATE TABLE IF NOT EXISTS clip_audio (
+  clip_id INTEGER NOT NULL,
+  seq INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  bytes INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (clip_id, seq)
+);
+`;
+const V3_COLUMNS: [string, string][] = [
+  ["status", "TEXT NOT NULL DEFAULT 'done'"],
+  ["error", "TEXT"],
+  ["mime", "TEXT"],
+  ["attempts", "INTEGER NOT NULL DEFAULT 1"],
+  ["uid", "TEXT"],
+];
+
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
   return (db.pragma(`table_info(${table})`) as { name: string }[]).some((c) => c.name === column);
 }
@@ -87,5 +106,11 @@ export function migrate(db: Database.Database): void {
   db.exec(DDL);
   db.exec(DDL_V2);
   if (!hasColumn(db, "lb_members", "invite_code")) db.exec("ALTER TABLE lb_members ADD COLUMN invite_code TEXT");
+  db.exec(DDL_V3);
+  for (const [column, type] of V3_COLUMNS) {
+    if (!hasColumn(db, "clips", column)) db.exec(`ALTER TABLE clips ADD COLUMN ${column} ${type}`);
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS clips_uid ON clips(uid) WHERE uid IS NOT NULL");
+  db.exec("CREATE INDEX IF NOT EXISTS clips_status ON clips(status)");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }

@@ -146,3 +146,26 @@ h2.bbv-serif { font-size: 30px; line-height: 1.15; }
 .bbv-ev-join { background: color-mix(in srgb, #16a34a 18%, transparent); }
 .bbv-ev-rejected { background: color-mix(in srgb, #dc2626 18%, transparent); }
 @media (max-width: 880px) { .bbv-admin-counts, .bbv-admin-grid { grid-template-columns: 1fr 1fr; } }
+
+/* History */
+.bbv-history { display: grid; gap: 22px; }
+.bbv-history-toolbar { display: flex; align-items: center; gap: 12px; }
+.bbv-history-search { max-width: 360px; }
+.bbv-history-notice { font-size: 12px; }
+.bbv-history-daylabel { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); margin: 0 0 8px; }
+.bbv-history-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--card, var(--background)); overflow: hidden; }
+.bbv-history-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--border); align-items: start; }
+.bbv-history-row:first-child { border-top: 0; }
+.bbv-history-time { color: var(--muted-foreground); font-size: 13px; padding-top: 2px; white-space: nowrap; }
+.bbv-history-body { min-width: 0; }
+.bbv-history-text { margin: 0; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.bbv-history-meta { margin: 4px 0 0; font-size: 12px; }
+.bbv-history-failnote { color: var(--destructive, #dc2626); font-weight: 500; }
+.bbv-history-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.bbv-history-row:hover .bbv-history-actions, .bbv-history-row:focus-within .bbv-history-actions { opacity: 1; }
+.bbv-history-row.bbv-history-failed .bbv-history-actions, .bbv-history-row.bbv-history-transcribing .bbv-history-actions { opacity: 1; }
+.bbv-icon-btn { background: none; border: 0; color: var(--muted-foreground); cursor: pointer; font: inherit; font-size: 14px; width: 30px; height: 30px; border-radius: 8px; display: inline-grid; place-items: center; }
+.bbv-icon-btn:hover { background: color-mix(in srgb, var(--foreground) 8%, transparent); color: var(--foreground); }
+.bbv-history-more { justify-self: center; }
+.bbv-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--foreground) 20%, transparent); border-top-color: var(--foreground); border-radius: 999px; animation: bbv-spin 0.8s linear infinite; vertical-align: -2px; margin-right: 4px; }
+@keyframes bbv-spin { to { transform: rotate(360deg); } }

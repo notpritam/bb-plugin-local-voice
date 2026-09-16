@@ -111,3 +111,78 @@ describe("invites + events (v2)", () => {
     expect(store.lbEventCounts(0)).toEqual({ join: 1, report: 1, leave: 0, rejected: 0 });
   });
 });
+
+describe("recordings and history", () => {
+  const start = (o: Partial<Parameters<InsightsStore["startRecording"]>[0]> = {}) =>
+    store.startRecording({ uid: "clip-aaaaaaaa", at: 5_000, day: "2026-09-16", surface: "field", mime: "audio/webm", model: "qwen3-asr", ...o });
+
+  it("migrates a v2 database: old rows read as done, new columns and audio table exist", () => {
+    const db = new Database(":memory:");
+    db.pragma("user_version = 0");
+    migrate(db);
+    const s = new InsightsStore(db);
+    s.insertClip(clip());
+    expect(s.history({ before: null, limit: 10, query: null })[0]).toMatchObject({ status: "done", attempts: 1, audioBytes: 0, uid: null });
+  });
+
+  it("keeps a recording out of the usage numbers until it is done", () => {
+    const id = start();
+    store.appendAudio(id, Buffer.from("abc"), 5_100);
+    store.appendAudio(id, Buffer.from("def"), 5_200);
+    expect(store.usageRows()).toHaveLength(0);
+    expect(store.totalWords()).toBe(0);
+    expect(store.audioFor(id)).toEqual({ mime: "audio/webm", data: Buffer.from("abcdef"), bytes: 6 });
+    expect(store.clipByUid("clip-aaaaaaaa")).toMatchObject({ id, status: "recording", audioBytes: 6 });
+
+    store.setStatus(id, "transcribing");
+    store.completeClip(id, { language: "Hindi", durationMs: 2000, rawText: "raw", text: "Hello there.", rawWords: 1, words: 2, fixes: 0, fillers: 0, translated: true, polished: true, asrMs: 10, polishMs: 5, engine: "llama", model: "qwen3-asr" });
+    expect(store.usageRows()).toHaveLength(1);
+    expect(store.totalWords()).toBe(2);
+    expect(store.clip(id)).toMatchObject({ status: "done", attempts: 1, text: "Hello there.", error: null });
+  });
+
+  it("marks failures, counts attempts and keeps the audio for a retry", () => {
+    const id = start();
+    store.appendAudio(id, Buffer.from("abc"), 5_100);
+    store.failClip(id, "router down");
+    expect(store.clip(id)).toMatchObject({ status: "failed", error: "router down", attempts: 1, audioBytes: 3 });
+    expect(store.usageRows()).toHaveLength(0);
+    store.completeClip(id, { language: null, durationMs: 1000, rawText: "ok", text: "Ok.", rawWords: 1, words: 1, fixes: 0, fillers: 0, translated: false, polished: true, asrMs: 1, polishMs: 1, engine: "llama", model: "qwen3-asr" });
+    expect(store.clip(id)).toMatchObject({ status: "done", attempts: 2, error: null });
+  });
+
+  it("lists history newest first with paging and a text filter", () => {
+    store.insertClip(clip({ at: 1_000, text: "first note" }));
+    store.insertClip(clip({ at: 2_000, text: "second 100% note" }));
+    const id = start({ at: 3_000 });
+    store.failClip(id, "boom");
+    const page = store.history({ before: null, limit: 2, query: null });
+    expect(page.map((c) => c.at)).toEqual([3_000, 2_000]);
+    expect(page[0]).toMatchObject({ status: "failed", error: "boom" });
+    expect(store.history({ before: 2_000, limit: 2, query: null }).map((c) => c.at)).toEqual([1_000]);
+    expect(store.history({ before: null, limit: 10, query: "100%" }).map((c) => c.at)).toEqual([2_000]);
+    expect(store.history({ before: null, limit: 10, query: "NOTE" })).toHaveLength(2);
+  });
+
+  it("purges old audio of finished clips only, deletes clips with their audio, and clears everything", () => {
+    const old = start({ uid: "clip-old00000", at: 1_000 });
+    store.appendAudio(old, Buffer.from("x"), 1_000);
+    store.completeClip(old, { language: null, durationMs: 1, rawText: "a", text: "A", rawWords: 1, words: 1, fixes: 0, fillers: 0, translated: false, polished: false, asrMs: 1, polishMs: null, engine: "llama", model: "m" });
+    const failed = start({ uid: "clip-fail0000", at: 1_500 });
+    store.appendAudio(failed, Buffer.from("y"), 1_500);
+    store.failClip(failed, "e");
+    const fresh = start({ uid: "clip-new00000", at: 9_000 });
+    store.appendAudio(fresh, Buffer.from("z"), 9_000);
+    expect(store.purgeAudioBefore(5_000)).toBe(1);
+    expect(store.audioFor(old)).toBeNull();
+    expect(store.audioFor(failed)).not.toBeNull();
+    expect(store.audioFor(fresh)).not.toBeNull();
+    store.deleteClip(failed);
+    expect(store.clip(failed)).toBeNull();
+    expect(store.audioFor(failed)).toBeNull();
+    expect(store.staleRecordings(10_000)).toEqual([fresh]);
+    store.clear();
+    expect(store.history({ before: null, limit: 10, query: null })).toHaveLength(0);
+    expect(store.audioFor(fresh)).toBeNull();
+  });
+});

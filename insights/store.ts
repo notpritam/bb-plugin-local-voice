@@ -56,7 +56,7 @@ export class InsightsStore {
   usageRows(): UsageRow[] {
     const rows = this.db
       .prepare(
-        "SELECT at, day, surface, language, duration_ms, raw_words, words, fixes, fillers, translated, category FROM clips ORDER BY at ASC",
+        "SELECT at, day, surface, language, duration_ms, raw_words, words, fixes, fillers, translated, category FROM clips WHERE status = 'done' AND words > 0 ORDER BY at ASC",
       )
       .all() as UsageDbRow[];
     return rows.map((r) => ({
@@ -75,7 +75,7 @@ export class InsightsStore {
   }
 
   uncategorized(limit: number): { id: number; text: string }[] {
-    return this.db.prepare("SELECT id, text FROM clips WHERE category IS NULL ORDER BY at ASC LIMIT ?").all(limit) as {
+    return this.db.prepare("SELECT id, text FROM clips WHERE category IS NULL AND status = 'done' AND words > 0 ORDER BY at ASC LIMIT ?").all(limit) as {
       id: number;
       text: string;
     }[];
@@ -86,18 +86,18 @@ export class InsightsStore {
   }
 
   totalWords(): number {
-    return (this.db.prepare("SELECT COALESCE(SUM(words), 0) AS n FROM clips").get() as { n: number }).n;
+    return (this.db.prepare("SELECT COALESCE(SUM(words), 0) AS n FROM clips WHERE status = 'done'").get() as { n: number }).n;
   }
 
   /** Newest first. */
   recentTexts(limit: number): string[] {
-    return (this.db.prepare("SELECT text FROM clips ORDER BY at DESC LIMIT ?").all(limit) as { text: string }[]).map((r) => r.text);
+    return (this.db.prepare("SELECT text FROM clips WHERE status = 'done' AND words > 0 ORDER BY at DESC LIMIT ?").all(limit) as { text: string }[]).map((r) => r.text);
   }
 
   /** Raw/polished pairs of same-language clips, newest first — translations are not corrections. */
   recentPairs(limit: number): { rawText: string; text: string }[] {
     return this.db
-      .prepare("SELECT raw_text AS rawText, text FROM clips WHERE translated = 0 ORDER BY at DESC LIMIT ?")
+      .prepare("SELECT raw_text AS rawText, text FROM clips WHERE translated = 0 AND status = 'done' AND words > 0 ORDER BY at DESC LIMIT ?")
       .all(limit) as { rawText: string; text: string }[];
   }
 
@@ -137,7 +137,7 @@ export class InsightsStore {
 
   dailyTotalsSince(day: string): ReportDay[] {
     return this.db
-      .prepare("SELECT day, SUM(words) AS words, COUNT(*) AS clips FROM clips WHERE day >= ? GROUP BY day ORDER BY day ASC")
+      .prepare("SELECT day, SUM(words) AS words, COUNT(*) AS clips FROM clips WHERE day >= ? AND status = 'done' AND words > 0 GROUP BY day ORDER BY day ASC")
       .all(day) as ReportDay[];
   }
 
@@ -260,10 +260,162 @@ export class InsightsStore {
   }
 
   count(): number {
-    return (this.db.prepare("SELECT COUNT(*) AS n FROM clips").get() as { n: number }).n;
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM clips WHERE status = 'done' AND words > 0").get() as { n: number }).n;
   }
 
   clear(): void {
-    this.db.exec("DELETE FROM clips; DELETE FROM profile;");
+    this.db.exec("DELETE FROM clip_audio; DELETE FROM clips; DELETE FROM profile;");
   }
+
+  // ---- recordings: a row exists from the first slice; the audio sits beside it.
+  startRecording(r: { uid: string; at: number; day: string; surface: Surface; mime: string; model: string }): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO clips (at, day, surface, language, duration_ms, raw_text, text, raw_words, words, fixes, fillers, translated, polished, asr_ms, polish_ms, engine, model, status, mime, attempts, uid)
+         VALUES (@at, @day, @surface, NULL, 0, '', '', 0, 0, 0, 0, 0, 0, NULL, NULL, 'llama', @model, 'recording', @mime, 0, @uid)`,
+      )
+      .run(r);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Slices are kept as rows (SQLite's `||` would cast a BLOB to text) and joined on read. */
+  appendAudio(id: number, slice: Buffer, now: number): void {
+    this.db
+      .prepare("INSERT INTO clip_audio (clip_id, seq, data, bytes, updated_at) VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM clip_audio WHERE clip_id = ?), ?, ?, ?)")
+      .run(id, id, slice, slice.length, now);
+  }
+
+  audioFor(id: number): { mime: string; data: Buffer; bytes: number } | null {
+    const parts = this.db.prepare("SELECT data FROM clip_audio WHERE clip_id = ? ORDER BY seq ASC").all(id) as { data: Buffer }[];
+    if (parts.length === 0) return null;
+    const mime = (this.db.prepare("SELECT mime FROM clips WHERE id = ?").get(id) as { mime: string | null } | undefined)?.mime ?? "audio/webm";
+    const data = Buffer.concat(parts.map((p) => p.data));
+    return { mime, data, bytes: data.length };
+  }
+
+  clipByUid(uid: string): ClipRow | null {
+    const row = this.db.prepare(`${CLIP_SELECT} WHERE c.uid = ?`).get(uid) as ClipDbRow | undefined;
+    return row === undefined ? null : toClipRow(row);
+  }
+
+  clip(id: number): ClipRow | null {
+    const row = this.db.prepare(`${CLIP_SELECT} WHERE c.id = ?`).get(id) as ClipDbRow | undefined;
+    return row === undefined ? null : toClipRow(row);
+  }
+
+  setUid(id: number, uid: string): void {
+    this.db.prepare("UPDATE clips SET uid = ? WHERE id = ?").run(uid, id);
+  }
+
+  setStatus(id: number, status: ClipStatus, error: string | null = null): void {
+    this.db.prepare("UPDATE clips SET status = ?, error = ? WHERE id = ?").run(status, error, id);
+  }
+
+  /** The outcome of a recording (or a retry): metrics in, status done, one more attempt. */
+  completeClip(id: number, clip: Omit<NewClip, "at" | "day" | "surface">): void {
+    this.db
+      .prepare(
+        `UPDATE clips SET language = @language, duration_ms = @durationMs, raw_text = @rawText, text = @text, raw_words = @rawWords, words = @words,
+           fixes = @fixes, fillers = @fillers, translated = @translated, polished = @polished, asr_ms = @asrMs, polish_ms = @polishMs, engine = @engine, model = @model,
+           status = 'done', error = NULL, attempts = attempts + 1, category = NULL
+         WHERE id = @id`,
+      )
+      .run({ ...clip, id, translated: clip.translated ? 1 : 0, polished: clip.polished ? 1 : 0 });
+  }
+
+  failClip(id: number, error: string): void {
+    this.db.prepare("UPDATE clips SET status = 'failed', error = ?, attempts = attempts + 1 WHERE id = ?").run(error, id);
+  }
+
+  deleteClip(id: number): void {
+    this.db.prepare("DELETE FROM clip_audio WHERE clip_id = ?").run(id);
+    this.db.prepare("DELETE FROM clips WHERE id = ?").run(id);
+  }
+
+  /** Newest first; `before` pages by `at`; `query` matches the text (case-insensitive). */
+  history(o: { before: number | null; limit: number; query: string | null }): ClipRow[] {
+    const filters = ["1 = 1"];
+    const params: (number | string)[] = [];
+    if (o.before !== null) {
+      filters.push("c.at < ?");
+      params.push(o.before);
+    }
+    if (o.query !== null && o.query.trim() !== "") {
+      filters.push("(c.text LIKE ? ESCAPE '\\' OR c.raw_text LIKE ? ESCAPE '\\')");
+      const like = `%${o.query.trim().replace(/[%_]/gu, (m) => `\\${m}`)}%`;
+      params.push(like, like);
+    }
+    params.push(o.limit);
+    const rows = this.db.prepare(`${CLIP_SELECT} WHERE ${filters.join(" AND ")} ORDER BY c.at DESC LIMIT ?`).all(...params) as ClipDbRow[];
+    return rows.map(toClipRow);
+  }
+
+  /** Drop audio of finished clips older than `before`; returns how many. */
+  purgeAudioBefore(before: number): number {
+    return this.db
+      .prepare("DELETE FROM clip_audio WHERE clip_id IN (SELECT id FROM clips WHERE at < ? AND status = 'done')")
+      .run(before).changes;
+  }
+
+  /** Rows still marked in progress from before `before` (a server restart mid-recording). */
+  staleRecordings(before: number): number[] {
+    return (this.db.prepare("SELECT id FROM clips WHERE status IN ('recording', 'transcribing') AND at < ?").all(before) as { id: number }[]).map((r) => r.id);
+  }
+}
+
+export type ClipStatus = "recording" | "transcribing" | "done" | "failed";
+export interface ClipRow {
+  id: number;
+  uid: string | null;
+  at: number;
+  day: string;
+  surface: Surface;
+  language: string | null;
+  durationMs: number;
+  rawText: string;
+  text: string;
+  words: number;
+  fixes: number;
+  translated: boolean;
+  polished: boolean;
+  asrMs: number | null;
+  polishMs: number | null;
+  model: string;
+  status: ClipStatus;
+  error: string | null;
+  mime: string | null;
+  attempts: number;
+  audioBytes: number;
+}
+interface ClipDbRow {
+  id: number; uid: string | null; at: number; day: string; surface: Surface; language: string | null; duration_ms: number; raw_text: string; text: string;
+  words: number; fixes: number; translated: number; polished: number; asr_ms: number | null; polish_ms: number | null; model: string;
+  status: ClipStatus; error: string | null; mime: string | null; attempts: number; audio_bytes: number | null;
+}
+const CLIP_SELECT = `SELECT c.id, c.uid, c.at, c.day, c.surface, c.language, c.duration_ms, c.raw_text, c.text, c.words, c.fixes, c.translated, c.polished, c.asr_ms, c.polish_ms, c.model,
+  c.status, c.error, c.mime, c.attempts, (SELECT SUM(bytes) FROM clip_audio a WHERE a.clip_id = c.id) AS audio_bytes FROM clips c`;
+function toClipRow(r: ClipDbRow): ClipRow {
+  return {
+    id: r.id,
+    uid: r.uid,
+    at: r.at,
+    day: r.day,
+    surface: r.surface,
+    language: r.language,
+    durationMs: r.duration_ms,
+    rawText: r.raw_text,
+    text: r.text,
+    words: r.words,
+    fixes: r.fixes,
+    translated: r.translated === 1,
+    polished: r.polished === 1,
+    asrMs: r.asr_ms,
+    polishMs: r.polish_ms,
+    model: r.model,
+    status: r.status,
+    error: r.error,
+    mime: r.mime,
+    attempts: r.attempts,
+    audioBytes: r.audio_bytes ?? 0,
+  };
 }

@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: WhisperConfig = {
   polish: true,
   serverUrl: "http://127.0.0.1:8091",
   polishModel: "gemma-4-e4b",
+  asrModel: "qwen3-asr",
 };
 export const MODEL_DOWNLOAD_BASE =
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -40,12 +41,14 @@ export function configFromSettings(values: {
   polish?: unknown;
   serverUrl?: unknown;
   polishModel?: unknown;
+  asrModel?: unknown;
 }): WhisperConfig {
   const str = (value: unknown, fallback: string) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
   const modelsDir = str(values.modelsDir, DEFAULT_CONFIG.modelsDir);
   const serverUrl = str(values.serverUrl, DEFAULT_CONFIG.serverUrl).replace(/\/+$/u, "");
   const polishModel = str(values.polishModel, DEFAULT_CONFIG.polishModel);
+  const asrModel = str(values.asrModel, DEFAULT_CONFIG.asrModel);
   const parsedThreads =
     typeof values.threads === "string" ? Number.parseInt(values.threads, 10) : Number.NaN;
   const threads = Number.isFinite(parsedThreads)
@@ -54,7 +57,7 @@ export function configFromSettings(values: {
   const translate =
     typeof values.translate === "boolean" ? values.translate : DEFAULT_CONFIG.translate;
   const polish = typeof values.polish === "boolean" ? values.polish : DEFAULT_CONFIG.polish;
-  return { modelsDir, threads, translate, polish, serverUrl, polishModel };
+  return { modelsDir, threads, translate, polish, serverUrl, polishModel, asrModel };
 }
 
 export function expandHome(p: string, homeDir: string): string {
@@ -153,6 +156,22 @@ export function wavRmsDb(buffer: Buffer): number | null {
     offset = start + size + (size % 2);
   }
   return null;
+}
+
+/** The samples of a RIFF wav (its `data` chunk); empty when the buffer is not a wav. */
+export function wavPcm(buffer: Buffer): Buffer {
+  if (buffer.length < 12 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    return Buffer.alloc(0);
+  }
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString("ascii", offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === "data") return buffer.subarray(start, Math.min(buffer.length, start + size));
+    offset = start + size + (size % 2);
+  }
+  return Buffer.alloc(0);
 }
 
 /** Duration of a 16 kHz mono s16le wav from its data chunk; null when not such a wav. */

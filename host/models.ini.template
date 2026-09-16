@@ -8,13 +8,16 @@ load-on-startup = true
 [qwen3-asr]
 model = __DIR__/Qwen3-ASR-1.7B-Q4_K_M.gguf
 mmproj = __DIR__/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
-c = 8192
+; four slots: a recording is cut into ~8 s chunks at pauses and recognised in parallel
+np = 4
+c = 16384
 
 ; Smaller/faster fallback ASR (loads on first use)
 [qwen3-asr-0.6b]
 model = __DIR__/Qwen3-ASR-0.6B-Q8_0.gguf
 mmproj = __DIR__/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
-c = 8192
+np = 4
+c = 16384
 load-on-startup = false
 
 ; Dictation polisher (Google Gemma 4 E4B instruct, Q4_0, MTP speculative decoding, thinking off)

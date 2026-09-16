@@ -49,7 +49,7 @@ describe("server", () => {
     expect(harness.inspection.experimental_hostRpcCalls[0]).toMatchObject({
       method: "configure",
       hostId: "host-1",
-      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b" },
+      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" },
     });
     service.controller.abort();
     await service.done;
@@ -301,5 +301,110 @@ describe("leaderboard client", () => {
     cleanup = () => harness.lifecycle.dispose();
     await harness.behavior.runSchedule("leaderboard-report");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("recordings", () => {
+  const uid = "clip-abcdefgh";
+  const recOk = (o: Partial<Record<string, unknown>> = {}) => ({
+    ok: true as const, id: uid, at: 1_700_000_000_000, mime: "audio/webm", model: "qwen3-asr", language: "Hindi", durationMs: 4000,
+    rawText: "यार deploy fail", text: "The deploy failed.", polished: true, translated: true, asrMs: 900, polishMs: 400, chunks: 1, ...o,
+  });
+
+  it("streams slices into SQLite, finishes through the host and answers the long-poll from the `rec` signal", async () => {
+    const { bb, harness, callHostRpc } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    expect(await harness.behavior.callRpc("rec_start", { uid, surface: "field", mime: "audio/webm" })).toEqual({ ok: true, id: 1 });
+    expect(await harness.behavior.callRpc("rec_append", { uid, seq: 0, data: Buffer.from("abc").toString("base64") })).toEqual({ ok: true });
+    expect(await harness.behavior.callRpc("rec_append", { uid, seq: 1, data: Buffer.from("def").toString("base64") })).toEqual({ ok: true });
+    expect(await harness.behavior.callRpc("rec_finish", { uid })).toEqual({ ok: true });
+    expect(harness.inspection.experimental_hostRpcCalls.map((c) => c.method)).toEqual(["recStart", "recAppend", "recAppend", "recFinish"]);
+    expect(callHostRpc).toHaveBeenCalledTimes(4);
+
+    // The audio is already kept, even before any outcome.
+    const audio = await harness.behavior.fetchHttp("GET", "/clip-audio?id=1");
+    expect(audio.status).toBe(200);
+    expect(audio.headers.get("content-type")).toBe("audio/webm");
+    expect(Buffer.from(await audio.arrayBuffer()).toString()).toBe("abcdef");
+
+    const pending = harness.behavior.callRpc("rec_result", { uid });
+    await harness.behavior.experimental_emitHostSignal("host-1", "rec", recOk());
+    expect(await pending).toEqual({ status: "done", id: 1, text: "The deploy failed." });
+    const history = (await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })) as { clips: { status: string; words: number; attempts: number; audioBytes: number; translated: boolean }[] };
+    expect(history.clips[0]).toMatchObject({ status: "done", words: 3, attempts: 1, audioBytes: 6, translated: true });
+    expect(await harness.behavior.callRpc("insights_usage", null)).toMatchObject({ totals: { words: 3, clips: 1 } });
+    expect(harness.inspection.realtimeSignals.some((s) => s.channel === "voice-history")).toBe(true);
+  });
+
+  it("keeps the audio and marks the clip failed when the host is unreachable, then retries from the kept audio", async () => {
+    const { bb, harness, callHostRpc } = makeHost();
+    callHostRpc.mockImplementation(async ({ method }) => {
+      if (method === "recStart") throw new Error("daemon offline");
+      return { ok: true };
+    });
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.callRpc("rec_start", { uid, surface: "composer", mime: "audio/webm" });
+    await harness.behavior.callRpc("rec_append", { uid, seq: 0, data: Buffer.from("xyz").toString("base64") });
+    await harness.behavior.callRpc("rec_finish", { uid });
+    expect(await harness.behavior.callRpc("rec_result", { uid })).toEqual({ status: "failed", id: 1, message: "Host unreachable: daemon offline" });
+    // No slices were forwarded after the failed start.
+    expect(harness.inspection.experimental_hostRpcCalls.map((c) => c.method)).toEqual(["recStart"]);
+
+    expect(await harness.behavior.callRpc("clip_retry", { id: 1 })).toEqual({ ok: true });
+    expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "recTranscribe", input: { id: uid, mime: "audio/webm", data: Buffer.from("xyz").toString("base64") } });
+    await harness.behavior.experimental_emitHostSignal("host-1", "rec", recOk({ text: "Second time lucky." }));
+    const history = (await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })) as { clips: { status: string; text: string; attempts: number }[] };
+    expect(history.clips[0]).toMatchObject({ status: "done", text: "Second time lucky.", attempts: 2 });
+  });
+
+  it("records a failed outcome from the host and lets the clip be deleted", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.callRpc("rec_transcribe", { uid, surface: "field", mime: "audio/ogg", data: Buffer.from("whole").toString("base64") });
+    expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "recTranscribe", input: { id: uid, mime: "audio/ogg" } });
+    await harness.behavior.experimental_emitHostSignal("host-1", "rec", { ok: false, id: uid, at: 1, code: "asr_failed", message: "ECONNREFUSED" });
+    expect(await harness.behavior.callRpc("rec_result", { uid })).toEqual({ status: "failed", id: 1, message: "ECONNREFUSED" });
+    expect(await harness.behavior.callRpc("clip_delete", { id: 1 })).toEqual({ ok: true });
+    expect((await harness.behavior.fetchHttp("GET", "/clip-audio?id=1")).status).toBe(404);
+    expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toEqual({ clips: [], hasMore: false });
+  });
+
+  it("cancel discards the row and its audio", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.callRpc("rec_start", { uid, surface: "field", mime: "audio/webm" });
+    await harness.behavior.callRpc("rec_append", { uid, seq: 0, data: Buffer.from("abc").toString("base64") });
+    expect(await harness.behavior.callRpc("rec_cancel", { uid })).toEqual({ ok: true });
+    expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toEqual({ clips: [], hasMore: false });
+    expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "recCancel" });
+  });
+
+  it("the stuck sweep fails recordings nobody finished and the retention schedule drops old audio", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.callRpc("rec_start", { uid, surface: "field", mime: "audio/webm" });
+    await harness.behavior.callRpc("rec_append", { uid, seq: 0, data: Buffer.from("abc").toString("base64") });
+    await harness.behavior.runSchedule("stuck-recordings");
+    // Too fresh to be stuck.
+    expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toMatchObject({ clips: [{ status: "recording" }] });
+    vi.useFakeTimers({ now: Date.now() + 11 * 60_000, toFake: ["Date"] });
+    try {
+      await harness.behavior.runSchedule("stuck-recordings");
+      expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toMatchObject({ clips: [{ status: "failed", audioBytes: 3 }] });
+      vi.setSystemTime(Date.now() + 40 * 86_400_000);
+      // Only finished clips lose their audio; a failed one keeps it for the retry.
+      await harness.behavior.runSchedule("audio-retention");
+      expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toMatchObject({ clips: [{ status: "failed", audioBytes: 3 }] });
+      await harness.behavior.experimental_emitHostSignal("host-1", "rec", recOk());
+      await harness.behavior.runSchedule("audio-retention");
+      expect(await harness.behavior.callRpc("history_list", { before: null, limit: 10, query: null })).toMatchObject({ clips: [{ status: "done", audioBytes: 0 }] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

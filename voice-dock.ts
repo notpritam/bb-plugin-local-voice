@@ -1,6 +1,6 @@
 // The "voice everywhere" content script: one floating mic button that docks
-// to whichever text input has focus, records, sends the clip through bb's
-// transcription endpoint, and inserts the text at the caret.
+// to whichever text input has focus, records (streaming slices to the plugin
+// as it goes), and inserts the transcript at the caret.
 
 export const COMPOSER_ROOT_SELECTOR = "[data-app-composer]";
 export const DOCK_ATTR = "data-bb-whisper-dock";
@@ -13,8 +13,8 @@ const DOCK_INSET = 6;
 export type DockState = "idle" | "recording" | "transcribing" | "error";
 
 export interface Recorder {
-  /** Stop and resolve the recorded clip. */
-  stop(): Promise<File>;
+  /** Stop, wait for the transcript. Rejects with the reason when it fails (the audio is kept in History). */
+  stop(signal: AbortSignal): Promise<string>;
   /** Stop and discard; never rejects. */
   cancel(): void;
 }
@@ -22,7 +22,6 @@ export interface Recorder {
 export interface DockDeps {
   signal: AbortSignal;
   createRecorder: () => Promise<Recorder>;
-  transcribe: (file: File, signal: AbortSignal) => Promise<string>;
   doc?: Document;
   minDurationMs?: number;
   errorDisplayMs?: number;
@@ -262,22 +261,14 @@ export function mountVoiceDock(deps: DockDeps): () => void {
     const active = recorder;
     if (active === null || state !== "recording") return;
     recorder = null;
-    const duration = now() - startedAt;
-    setState("transcribing");
-    let file: File;
-    try {
-      file = await active.stop();
-    } catch {
-      showError("Voice recording failed");
-      return;
-    }
-    if (disposed) return;
-    if (duration < minDurationMs) {
+    if (now() - startedAt < minDurationMs) {
+      active.cancel();
       finish();
       return;
     }
+    setState("transcribing");
     try {
-      const text = (await deps.transcribe(file, abort.signal)).trim();
+      const text = (await active.stop(abort.signal)).trim();
       if (disposed) return;
       if (text !== "" && target !== null && target.isConnected) insertTextAtCursor(target, text);
       finish();

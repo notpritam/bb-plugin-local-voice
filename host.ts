@@ -5,6 +5,8 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { experimental_aiServicesHostContract } from "@get-bb/plugin-sdk/ai-services";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { classifyFetch, classifyText } from "./classify.js";
+import { SESSION_IDLE_MS, SessionRegistry, createSession, type SessionEntry } from "./recording.js";
+import { selectEngine } from "./engine.js";
 import { generatePersona, profileFetch } from "./profile.js";
 import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, whisperConfigSchema, type Category, type WhisperConfig } from "./contract.js";
 import { runCommand, transcribeAudio } from "./transcribe.js";
@@ -33,10 +35,107 @@ async function writeConfig(dataDir: string, config: WhisperConfig): Promise<void
   await writeFile(path.join(dataDir, CONFIG_FILE), JSON.stringify(config, null, 2));
 }
 
+/** Recording sessions live for the worker's lifetime; the outcome of each is one `rec` signal. */
+const sessions = new SessionRegistry();
+let sweeper: ReturnType<typeof setInterval> | null = null;
+
+type EmitRec = (payload: import("./contract.js").RecSignal) => Promise<void>;
+
+async function finishAndEmit(entry: SessionEntry, emit: EmitRec, lease: { dispose(): Promise<void> } | null): Promise<void> {
+  entry.finishing = true;
+  const at = Date.now();
+  try {
+    const result = await entry.session.finish();
+    if (result.ok) {
+      await emit({
+        ok: true,
+        id: entry.id,
+        at,
+        mime: entry.mime,
+        model: entry.model,
+        language: result.language,
+        durationMs: result.durationMs,
+        rawText: result.rawText,
+        text: result.text,
+        polished: result.polished,
+        translated: result.translated,
+        asrMs: result.asrMs,
+        polishMs: result.polishMs,
+        chunks: result.chunks,
+      });
+    } else {
+      await emit({ ok: false, id: entry.id, at, code: result.code, message: result.message });
+    }
+  } catch (error) {
+    await emit({ ok: false, id: entry.id, at, code: "request_failed", message: error instanceof Error ? error.message : String(error) }).catch(() => {});
+  } finally {
+    sessions.delete(entry.id);
+    await lease?.dispose().catch(() => {});
+  }
+}
+
+function recordingConfig(config: WhisperConfig, model: string | null) {
+  const asrModel = model ?? config.asrModel;
+  return { serverUrl: config.serverUrl, asrModel, polish: config.polish, translate: config.translate, polishModel: config.polishModel };
+}
+
 export default experimental_defineHostEntry({
   contract: hostContract,
   experimental_signals: hostSignals,
   handlers: {
+    recStart: async ({ id, mime, model }, context) => {
+      const config = await readConfig(context.experimental_paths.dataDir);
+      const engine = selectEngine(model ?? config.asrModel);
+      if (engine.kind !== "llama") return { ok: false as const, message: "Streaming recordings need the llama-server engine; whisper.cpp models go through bb's own path." };
+      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model), { streaming: true }), startedAt: Date.now() });
+      // Retained so the daemon does not idle-stop the worker mid-recording.
+      const lease = context.experimental_retainWorker();
+      (entry as SessionEntry & { lease?: typeof lease }).lease = lease;
+      if (sweeper === null) {
+        sweeper = setInterval(() => {
+          for (const dropped of sessions.sweep(Date.now(), SESSION_IDLE_MS)) {
+            void context.experimental_emitSignal("rec", { ok: false, id: dropped, at: Date.now(), code: "abandoned", message: "The recording never finished (the browser went away)." }).catch(() => {});
+          }
+          if (sessions.size === 0 && sweeper !== null) {
+            clearInterval(sweeper);
+            sweeper = null;
+          }
+        }, 30_000);
+        sweeper.unref();
+        context.lifecycle.signal.addEventListener("abort", () => sessions.cancelAll(), { once: true });
+      }
+      return { ok: true as const };
+    },
+    recAppend: async ({ id, data }) => {
+      const entry = sessions.get(id);
+      if (entry === null) return { ok: false as const, message: `No recording "${id}" in progress.` };
+      entry.session.append(Buffer.from(data, "base64"));
+      return { ok: true as const };
+    },
+    recFinish: async ({ id }, context) => {
+      const entry = sessions.get(id);
+      if (entry === null) return { ok: false as const, message: `No recording "${id}" in progress.` };
+      if (entry.finishing) return { ok: true as const };
+      void finishAndEmit(entry, (payload) => context.experimental_emitSignal("rec", payload), (entry as SessionEntry & { lease?: { dispose(): Promise<void> } }).lease ?? null);
+      return { ok: true as const };
+    },
+    recCancel: async ({ id }) => {
+      const entry = sessions.get(id);
+      if (entry === null) return { ok: true as const };
+      entry.session.cancel();
+      sessions.delete(id);
+      await (entry as SessionEntry & { lease?: { dispose(): Promise<void> } }).lease?.dispose().catch(() => {});
+      return { ok: true as const };
+    },
+    recTranscribe: async ({ id, mime, model, data }, context) => {
+      const config = await readConfig(context.experimental_paths.dataDir);
+      const engine = selectEngine(model ?? config.asrModel);
+      if (engine.kind !== "llama") return { ok: false as const, message: "Retries need the llama-server engine." };
+      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model), { streaming: false }), startedAt: Date.now() });
+      entry.session.append(Buffer.from(data, "base64"));
+      void finishAndEmit(entry, (payload) => context.experimental_emitSignal("rec", payload), context.experimental_retainWorker());
+      return { ok: true as const };
+    },
     configure: async (config, context) => {
       await writeConfig(context.experimental_paths.dataDir, config);
       return { ok: true as const };
