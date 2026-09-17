@@ -131,6 +131,21 @@ describe("transcribeWithLlama", () => {
     expect(await transcribeWithLlama(base(f.fetchImpl))).toMatchObject({ ok: true, text: "नमस्ते", polished: false });
   });
 
+  it("asrRequest passes the previous text as the prompt", async () => {
+    const { asrRequest } = await import("./engine");
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      expect(form.get("prompt")).toBe("यार कल का");
+      return new Response(JSON.stringify({ text: "language Hindi<asr_text>डिप्लॉय" }));
+    }) as unknown as typeof fetch;
+    await expect(asrRequest({ wav: toneWav(), model: "qwen3-asr", serverUrl: "http://x", signal: new AbortController().signal, budgetMs: 1000, prompt: "यार कल का", fetchImpl })).resolves.toEqual({ language: "Hindi", text: "डिप्लॉय" });
+    const bare = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect((init?.body as FormData).has("prompt")).toBe(false);
+      return new Response(JSON.stringify({ text: "x" }));
+    }) as unknown as typeof fetch;
+    await asrRequest({ wav: toneWav(), model: "qwen3-asr", serverUrl: "http://x", signal: new AbortController().signal, budgetMs: 1000, prompt: null, fetchImpl: bare });
+  });
+
   it("buildPolishPrompt carries the transcriptionist rules", () => {
     const english = buildPolishPrompt(true);
     expect(english).toContain("filler words");

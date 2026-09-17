@@ -76,12 +76,13 @@ export function createSession(config: RecordingConfig, o: SessionOptions): Recor
   const fetchOpt = o.fetchImpl === undefined ? {} : { fetchImpl: o.fetchImpl };
   return new RecordingSession({
     decode: o.decode ?? decodeWithFfmpeg,
-    asr: (wav, signal) => asrRequest({ wav, model: config.asrModel, serverUrl: config.serverUrl, signal, budgetMs: ASR_CEILING_MS, ...fetchOpt }),
+    asr: (wav, signal, context) => asrRequest({ wav, model: config.asrModel, serverUrl: config.serverUrl, signal, budgetMs: ASR_CEILING_MS, prompt: context, ...fetchOpt }),
     polish: config.polish
       ? (text, translate, signal) => polishRequest({ text, translate, model: config.polishModel, serverUrl: config.serverUrl, signal, budgetMs: POLISH_CEILING_MS, ...fetchOpt })
       : null,
     translate: config.translate,
     polishMode: o.streaming ? "groups" : "whole",
+    contextWaitMs: o.streaming ? 2500 : 0,
   });
 }
 

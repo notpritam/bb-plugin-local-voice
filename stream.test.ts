@@ -97,10 +97,10 @@ describe("RecordingSession", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(asr).toHaveBeenCalledTimes(4);
-    // Every cut landed inside a pause: chunk lengths ≈ 7.2 s, 9 s, 9 s, 4.8 s.
-    expect(asrCalls.map((c) => Math.round(c.ms / 100) / 10)).toEqual([7.2, 9, 9, 4.8]);
-    expect(result.rawText).toBe("chunk1(7225) chunk2(9000) chunk3(9000) chunk4(4775)");
-    expect(result.text).toBe("EN:chunk1(7225) chunk2(9000) chunk3(9000) chunk4(4775)");
+    // Every cut landed inside a pause: chunk lengths ≈ 7.1 s, 9 s, 9 s, 4.9 s.
+    expect(asrCalls.map((c) => Math.round(c.ms / 100) / 10)).toEqual([7.1, 9, 9, 4.9]);
+    expect(result.rawText).toBe("chunk1(7075) chunk2(9000) chunk3(9000) chunk4(4925)");
+    expect(result.text).toBe("EN:chunk1(7075) chunk2(9000) chunk3(9000) chunk4(4925)");
     expect(result.language).toBe("Hindi");
     expect(result.translated).toBe(true);
     expect(result.polished).toBe(true);
@@ -114,7 +114,7 @@ describe("RecordingSession", () => {
     session.append(pcm);
     const result = await session.finish();
     expect(result.ok).toBe(true);
-    expect(asrCalls.map((c) => Math.round(c.ms / 100) / 10)).toEqual([9.2, 10.8]);
+    expect(asrCalls.map((c) => Math.round(c.ms / 100) / 10)).toEqual([9.1, 10.9]);
   });
 
   it("forces a cut at maxMs when the speaker never pauses", async () => {
@@ -204,8 +204,8 @@ describe("polish groups", () => {
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
     }
-    // Chunks: [0, ~4.1] short pause, [~4.1, ~8.4] long pause → group A closed and polished before the stop.
-    expect(session.chunksDispatched).toBeGreaterThanOrEqual(3);
+    // Chunks: [0, ~4.1] (short pause at 4 s, min 4 s), [~4.1, ~8.4] long pause → group A closed and polished before the stop.
+    expect(session.chunksDispatched).toBeGreaterThanOrEqual(2);
     expect(polishCalls).toHaveLength(1);
     expect(polishCalls[0]!.at).toBeLessThan(16_000);
     const result = await session.finish();
@@ -232,5 +232,86 @@ describe("polish groups", () => {
     session.append(pcm);
     const result = await session.finish();
     expect(result).toMatchObject({ ok: true, text: "One. t2", polished: false });
+  });
+});
+
+describe("critical path at finish", () => {
+  it("splits a long tail at pauses into pieces that recognise in parallel, never shorter than tailMinMs", async () => {
+    // 9 s with pauses at 4.5 s and 7 s and no long pause. Recording: 9 s usable minus the guard is 8.7 s,
+    // the earliest pause after 4 s is at 4.5 s → chunk [0, 4.6]. Finish: tail [4.6, 9] is 4.4 s < 7 s → stays whole
+    // (splitting at 7 s would leave a 2 s piece).
+    const pcm = speech(9000, [{ at: 4500, ms: 200 }, { at: 7000, ms: 200 }]);
+    const lengths: number[] = [];
+    const asr = async (wav: Buffer) => { lengths.push(Math.round((wav.length - 44) / PCM_BYTES_PER_MS / 100) / 10); return { language: "English", text: "x" }; };
+    const short = new RecordingSession({ decode: async (b) => b, asr, polish: null, translate: false, polishMode: "groups" });
+    short.append(pcm);
+    expect((await short.finish()).ok).toBe(true);
+    expect(lengths).toEqual([4.6, 4.4]);
+
+    // A 12 s tail with pauses at 4 s and 8 s is split into three ~4 s pieces.
+    lengths.length = 0;
+    const long = new RecordingSession({ decode: async (b) => b, asr, polish: null, translate: false, polishMode: "groups", targetMs: 100_000 });
+    long.append(speech(12_000, [{ at: 4000, ms: 200 }, { at: 8000, ms: 200 }]));
+    expect((await long.finish()).ok).toBe(true);
+    expect(lengths).toEqual([4.1, 4, 3.9]);
+  });
+
+  it("closes a polish group once it spans groupMaxMs even without a long pause", async () => {
+    // 30 s of speech with only short pauses every 5 s: groups must still close so the last polish stays small.
+    const pcm = speech(30_000, [5000, 10_000, 15_000, 20_000, 25_000].map((at) => ({ at, ms: 200 })));
+    const polished: string[] = [];
+    let n = 0;
+    const session = new RecordingSession({ decode: async (b) => b, asr: async () => ({ language: "English", text: `c${(n += 1)}` }), polish: async (t) => { polished.push(t); return t.toUpperCase(); }, translate: false, polishMode: "groups", groupMaxMs: 12_000 });
+    session.append(pcm);
+    const result = await session.finish();
+    expect(result.ok).toBe(true);
+    expect(polished.length).toBeGreaterThanOrEqual(2);
+    for (const group of polished) expect(group.split(" ").length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("recogniser context", () => {
+  it("hands each chunk the text of the latest chunk already recognised", async () => {
+    const pcm = speech(20_000, [{ at: 5000, ms: 300 }, { at: 10_000, ms: 300 }, { at: 15_000, ms: 300 }]);
+    const seen: (string | null)[] = [];
+    let n = 0;
+    const session = new RecordingSession({
+      decode: async (b) => b,
+      asr: async (_wav, _signal, context) => {
+        seen.push(context);
+        await new Promise((r) => setTimeout(r, 5));
+        return { language: "Hindi", text: `chunk${(n += 1)} `.repeat(30).trim() };
+      },
+      polish: null,
+      translate: false,
+      maxInFlight: 1, // serial, so every chunk sees its predecessor
+    });
+    session.append(pcm);
+    const result = await session.finish();
+    expect(result.ok).toBe(true);
+    expect(seen[0]).toBeNull();
+    expect(seen[1]).toMatch(/chunk1$/);
+    expect(seen[1]!.length).toBeLessThanOrEqual(200);
+    expect(seen[2]).toMatch(/chunk2$/);
+  });
+
+  it("waits briefly for the previous chunk when contextWaitMs is set, so the tail still gets context", async () => {
+    const pcm = speech(12_000, [{ at: 6000, ms: 300 }]);
+    const seen: (string | null)[] = [];
+    const session = new RecordingSession({
+      decode: async (b) => b,
+      asr: async (_wav, _signal, context) => {
+        seen.push(context);
+        await new Promise((r) => setTimeout(r, 30));
+        return { language: "Hindi", text: `t${seen.length}` };
+      },
+      polish: null,
+      translate: false,
+      contextWaitMs: 500,
+    });
+    session.append(pcm);
+    expect((await session.finish()).ok).toBe(true);
+    // Both chunks were dispatched together (batch), yet the second waited for the first's text.
+    expect(seen).toEqual([null, "t1"]);
   });
 });

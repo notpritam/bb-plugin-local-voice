@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-local-voice",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "type": "module",
   "engines": {
     "bb": ">=0.41",

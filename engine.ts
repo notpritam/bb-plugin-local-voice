@@ -120,6 +120,8 @@ export interface AsrRequest {
   signal: AbortSignal;
   /** Time ceiling for this one request. */
   budgetMs: number;
+  /** Text of the preceding speech, given to the model as its prompt (keeps script/vocabulary across chunks). */
+  prompt?: string | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -131,6 +133,7 @@ export async function asrRequest(o: AsrRequest): Promise<{ language: string | nu
   form.set("file", new Blob([new Uint8Array(o.wav)], { type: "audio/wav" }), "audio.wav");
   form.set("model", o.model);
   form.set("response_format", "json");
+  if (o.prompt !== undefined && o.prompt !== null && o.prompt.trim() !== "") form.set("prompt", o.prompt);
   let response: Response;
   try {
     response = await boundedFetch(fetchImpl, `${base}/v1/audio/transcriptions`, { method: "POST", body: form }, o.signal, o.budgetMs);
@@ -222,8 +225,8 @@ export async function transcribeWithLlama(args: LlamaTranscribeArgs): Promise<Ll
   const pcm = wavPcm(args.wav);
   const session = new RecordingSession({
     decode: async () => pcm,
-    asr: (wav, signal) =>
-      asrRequest({ wav, model: args.model, serverUrl: args.serverUrl, signal, budgetMs: args.remainingMs() - BUDGET_MARGIN_MS, ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl }) }),
+    asr: (wav, signal, context) =>
+      asrRequest({ wav, model: args.model, serverUrl: args.serverUrl, signal, budgetMs: args.remainingMs() - BUDGET_MARGIN_MS, prompt: context, ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl }) }),
     polish: args.polish
       ? async (text, translate, signal) => {
           if (args.remainingMs() < MIN_POLISH_BUDGET_MS) return null;

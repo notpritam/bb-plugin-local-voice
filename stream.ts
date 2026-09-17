@@ -7,6 +7,8 @@
 
 export const PCM_BYTES_PER_MS = 32; // 16 kHz mono s16le
 export const SILENCE_DBFS = -50;
+/** How much of the previous chunk's text is handed to the recogniser as context. */
+export const CONTEXT_CHARS = 200;
 
 export interface ChunkText {
   language: string | null;
@@ -16,8 +18,12 @@ export interface ChunkText {
 export interface SessionDeps {
   /** Container bytes (webm/ogg/mp4, possibly truncated) → 16 kHz mono s16le PCM. */
   decode: (bytes: Buffer, signal: AbortSignal) => Promise<Buffer>;
-  /** One chunk of speech, as a wav, → its transcript in its own language. */
-  asr: (wav: Buffer, signal: AbortSignal) => Promise<ChunkText>;
+  /**
+   * One chunk of speech, as a wav, → its transcript in its own language. `context` is the raw
+   * text of the most recent chunk already recognised (or null): Qwen3-ASR takes it as a prompt,
+   * which keeps script and vocabulary consistent across cuts in code-switched speech.
+   */
+  asr: (wav: Buffer, signal: AbortSignal, context: string | null) => Promise<ChunkText>;
   /** The transcriptionist pass over the joined text; null = polishing off. Returns null to keep the raw text. */
   polish: ((text: string, translate: boolean, signal: AbortSignal) => Promise<string | null>) | null;
   translate: boolean;
@@ -30,6 +36,17 @@ export interface SessionDeps {
   polishMode?: "groups" | "whole";
   /** A quiet stretch at least this long closes a polish group. */
   groupPauseMs?: number;
+  /**
+   * Before recognising a chunk, wait up to this long for the previous chunk's text to use as
+   * context (0 = take it only if already in). Streaming sessions wait — the previous chunk is
+   * usually seconds ahead — so cuts inside code-switched speech keep their script.
+   */
+  contextWaitMs?: number;
+  /** A group that already spans this much speech closes at the next cut, whatever the pause (bounds the last polish). */
+  groupMaxMs?: number;
+  /** At finish, a tail at least this long is split at pauses into pieces of at least `tailMinMs`, recognised in parallel. */
+  tailTargetMs?: number;
+  tailMinMs?: number;
   /** Chunk jobs allowed in flight at once (llama-server slots). */
   maxInFlight?: number;
   /** Cut when at least this much undispatched speech has been decoded. */
@@ -96,6 +113,14 @@ export function quietestWindow(pcm: Buffer, fromMs: number, toMs: number, window
 /** A window counts as a pause when it is near-silent or well below the surrounding speech. */
 export function isPause(windowLevel: number, surroundingLevel: number): boolean {
   return windowLevel < SILENCE_DBFS + 10 || windowLevel < surroundingLevel - 15;
+}
+
+/** Midpoint of the earliest pause window starting in [fromMs, toMs], or null when there is none. */
+export function firstPause(pcm: Buffer, fromMs: number, toMs: number, surroundingLevel: number, windowMs = 150, stepMs = 25): number | null {
+  for (let at = fromMs; at <= toMs; at += stepMs) {
+    if (isPause(pcmRmsDb(pcm, at * PCM_BYTES_PER_MS, (at + windowMs) * PCM_BYTES_PER_MS), surroundingLevel)) return at + Math.floor(windowMs / 2);
+  }
+  return null;
 }
 
 /** How long the quiet stretch around `atMs` is (bounded by `limitMs` each way). */
@@ -203,6 +228,8 @@ export class RecordingSession {
   private lastDecodeAt = Number.NEGATIVE_INFINITY;
   private cutMs = 0;
   private decodedMs = 0;
+  /** Where the open polish group started (ms into the clip). */
+  private groupStartMs = 0;
   private readonly jobs: ChunkJob[] = [];
   private readonly groups: PolishGroup[] = [];
   private pump: Promise<void> = Promise.resolve();
@@ -218,9 +245,13 @@ export class RecordingSession {
     this.o = {
       polishMode: "whole",
       groupPauseMs: 450,
+      contextWaitMs: 0,
+      groupMaxMs: 9000,
+      tailTargetMs: 7000,
+      tailMinMs: 3500,
       maxInFlight: 4,
-      targetMs: 5000,
-      minMs: 3000,
+      targetMs: 6000,
+      minMs: 4000,
       maxMs: 12000,
       decodeEveryMs: 2000,
       tailGuardMs: 300,
@@ -278,43 +309,75 @@ export class RecordingSession {
     this.decodedMs = totalMs;
     const usableMs = final ? totalMs : Math.max(0, totalMs - this.o.tailGuardMs);
     // Prefer a real pause once `targetMs` of speech is waiting; never let a chunk grow past `maxMs`.
-    while (usableMs - this.cutMs >= this.o.targetMs) {
-      const from = this.cutMs;
-      const searchFrom = from + this.o.minMs;
-      const forced = usableMs - from >= this.o.maxMs;
-      const searchTo = (forced ? from + this.o.maxMs : usableMs) - 150;
-      if (searchTo <= searchFrom) break;
-      const quiet = quietestWindow(pcm, searchFrom, searchTo);
-      const surrounding = pcmRmsDb(pcm, searchFrom * PCM_BYTES_PER_MS, searchTo * PCM_BYTES_PER_MS);
-      const pause = isPause(quiet.level, surrounding);
-      if (!forced && !pause) break;
-      const span = pause ? pauseSpanMs(pcm, quiet.at, surrounding) : 0;
-      this.dispatch(pcm, from, quiet.at, span >= this.o.groupPauseMs);
+    this.cutRange(pcm, usableMs, this.o.targetMs, this.o.minMs, this.o.maxMs, 0);
+    if (final) {
+      // The tail is on the critical path: a long one is split at pauses so its pieces run on parallel
+      // slots — but never into pieces so short that the recogniser loses the phrase.
+      this.cutRange(pcm, totalMs, this.o.tailTargetMs, this.o.tailMinMs, this.o.maxMs, this.o.tailMinMs);
+      if (totalMs > this.cutMs) this.dispatch(pcm, this.cutMs, totalMs, true);
     }
-    if (final && totalMs > this.cutMs) this.dispatch(pcm, this.cutMs, totalMs, true);
+  }
+
+  private cutRange(pcm: Buffer, usableMs: number, targetMs: number, minMs: number, maxMs: number, remainderMinMs: number): void {
+    while (usableMs - this.cutMs >= targetMs) {
+      const from = this.cutMs;
+      const searchFrom = from + minMs;
+      const forced = usableMs - from >= maxMs;
+      const searchTo = Math.min((forced ? from + maxMs : usableMs) - 150, usableMs - remainderMinMs);
+      if (searchTo <= searchFrom) break;
+      const surrounding = pcmRmsDb(pcm, searchFrom * PCM_BYTES_PER_MS, searchTo * PCM_BYTES_PER_MS);
+      // The earliest pause keeps chunks short (parallel slots, short tail); a forced cut takes the quietest spot.
+      const pauseAt = firstPause(pcm, searchFrom, searchTo, surrounding);
+      if (pauseAt === null && !forced) break;
+      const at = pauseAt ?? quietestWindow(pcm, searchFrom, searchTo).at;
+      const span = pauseAt === null ? 0 : pauseSpanMs(pcm, at, surrounding);
+      // A finished thought (long pause) closes the polish group; so does a group that has grown past groupMaxMs.
+      const closes = span >= this.o.groupPauseMs || at - this.groupStartMs >= this.o.groupMaxMs;
+      this.dispatch(pcm, from, at, closes);
+    }
   }
 
   private dispatch(pcm: Buffer, fromMs: number, toMs: number, closesGroup: boolean): void {
     this.cutMs = toMs;
+    if (closesGroup) this.groupStartMs = toMs;
     const slice = pcm.subarray(fromMs * PCM_BYTES_PER_MS, toMs * PCM_BYTES_PER_MS);
     const job: ChunkJob = { fromMs, toMs, closesGroup, outcome: null, result: Promise.resolve({ language: null, text: "", asrMs: 0 }) };
+    this.jobs.push(job);
     job.result = this.gate.run(async (): Promise<ChunkOutcome> => {
-      const started = this.o.now();
-      const empty = { language: null, text: "", asrMs: 0 };
-      if (pcmRmsDb(slice) < SILENCE_DBFS) return empty;
-      try {
-        const out = await this.o.asr(pcmToWav(slice), this.controller.signal);
-        return { ...out, asrMs: this.o.now() - started };
-      } catch (error) {
-        if (this.failure === null) this.failure = { code: "asr_failed", message: error instanceof Error ? error.message : String(error), cause: error };
-        return { ...empty, asrMs: this.o.now() - started };
-      }
+      const outcome = await this.recognise(job, slice);
+      job.outcome = outcome; // set before the slot is released, so the next chunk's context sees it
+      return outcome;
     });
-    void job.result.then((outcome) => {
-      job.outcome = outcome;
+    void job.result.then(() => {
       if (this.o.polishMode === "groups") this.polishReadyGroups();
     });
-    this.jobs.push(job);
+  }
+
+  private async recognise(job: ChunkJob, slice: Buffer): Promise<ChunkOutcome> {
+    const started = this.o.now();
+    const empty = { language: null, text: "", asrMs: 0 };
+    if (pcmRmsDb(slice) < SILENCE_DBFS) return empty;
+    try {
+      const out = await this.o.asr(pcmToWav(slice), this.controller.signal, await this.contextFor(job));
+      return { ...out, asrMs: this.o.now() - started };
+    } catch (error) {
+      if (this.failure === null) this.failure = { code: "asr_failed", message: error instanceof Error ? error.message : String(error), cause: error };
+      return { ...empty, asrMs: this.o.now() - started };
+    }
+  }
+
+  /** The latest earlier chunk whose text is in (waiting briefly for the previous one): its tail, as the recogniser's prompt. */
+  private async contextFor(job: ChunkJob): Promise<string | null> {
+    const index = this.jobs.indexOf(job);
+    const previous = index > 0 ? this.jobs[index - 1]! : null;
+    if (previous !== null && previous.outcome === null && this.o.contextWaitMs > 0) {
+      await Promise.race([previous.result, new Promise<void>((resolve) => setTimeout(resolve, this.o.contextWaitMs))]);
+    }
+    for (let i = (index < 0 ? this.jobs.length : index) - 1; i >= 0; i -= 1) {
+      const text = this.jobs[i]!.outcome?.text.trim();
+      if (text !== undefined && text !== "") return text.length > CONTEXT_CHARS ? text.slice(-CONTEXT_CHARS) : text;
+    }
+    return null;
   }
 
   /** Launch a polish for every complete group (all chunks recognised, closed by a long pause) not yet polished. */
