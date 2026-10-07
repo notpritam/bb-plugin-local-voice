@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, type WhisperConfig } from "./contract.js";
 import { deriveClip } from "./insights/clip.js";
@@ -25,30 +27,30 @@ interface LeaderboardMember {
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
-    serverUrl: {
+    elevenlabsApiKey: {
       type: "string",
-      label: "llama-server router URL (bb-local-voice.service)",
-      default: DEFAULT_CONFIG.serverUrl,
+      label: "ElevenLabs API key (speech-to-text; kept on the server and the host, never in the browser)",
+      secret: true,
     },
     polish: {
       type: "boolean",
-      label: "Polish dictation (fillers out, punctuation, lists, identifiers)",
+      label: "Format dictation with Claude (fillers out, punctuation, lists, Hindi in Latin letters)",
       default: DEFAULT_CONFIG.polish,
     },
     translate: {
       type: "boolean",
-      label: "Output English (off = keep the spoken language)",
+      label: "Output English (off = keep the spoken language, Hindi written in Latin letters)",
       default: DEFAULT_CONFIG.translate,
     },
-    polishModel: {
+    sttModel: {
       type: "string",
-      label: "Polisher model alias on the router",
-      default: DEFAULT_CONFIG.polishModel,
+      label: "ElevenLabs speech-to-text model (mic dock, composer, retries)",
+      default: DEFAULT_CONFIG.sttModel,
     },
-    asrModel: {
+    formatModel: {
       type: "string",
-      label: "Recogniser model alias on the router (mic dock, composer, retries)",
-      default: DEFAULT_CONFIG.asrModel,
+      label: "Claude model for formatting, categories and the voice profile (runs on this host's Claude Code login)",
+      default: DEFAULT_CONFIG.formatModel,
     },
     audioRetentionDays: {
       type: "string",
@@ -99,7 +101,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.experimental_aiServices.register({
     id: LOCAL_VOICE_SERVICE_ID,
-    displayName: "Local Voice (Qwen3-ASR + Gemma on this host)",
+    displayName: "Local Voice (ElevenLabs Scribe + Claude formatting)",
     kinds: ["voice"],
   });
 
@@ -129,7 +131,7 @@ export default async function plugin(bb: BbPluginApi) {
     host: {
       call: async (method, input) => host.call(method, input as never, { hostId: await primaryHost() }) as Promise<{ ok: boolean; message?: string }>,
     },
-    asrModel: async () => (await currentConfig()).asrModel,
+    sttModel: async () => (await currentConfig()).sttModel,
     retentionDays: async () => {
       const raw = (await settings.get()).audioRetentionDays;
       const days = typeof raw === "string" ? Number.parseInt(raw, 10) : Number.NaN;
@@ -528,6 +530,21 @@ export default async function plugin(bb: BbPluginApi) {
     return configFromSettings(await settings.get());
   }
 
+  /**
+   * Claude on the primary host goes through bb's Account Pooler when it has a token for that host (the route
+   * bb's own Claude threads take there); otherwise the host's own Claude Code login. Only the route and the
+   * token file's path go over; the host reads the token itself.
+   */
+  function claudeProxyFor(primaryHostId: string): WhisperConfig["claudeProxy"] {
+    try {
+      const tokenFile = path.join(bb.server.experimental_dataDir, "plugins", "account-pool", "secrets", "accounts", `hub-token-${primaryHostId}.json`);
+      if (!existsSync(tokenFile)) return null;
+      return { baseUrl: `${bb.server.loopbackBaseUrl.replace(/\/+$/u, "")}/api/v1/plugins/account-pool/http`, tokenFile };
+    } catch {
+      return null;
+    }
+  }
+
   // The AI-service call goes straight from core to the host worker, which
   // cannot read plugin settings itself, so the server pushes them over and
   // the host persists them beside its data.
@@ -537,13 +554,14 @@ export default async function plugin(bb: BbPluginApi) {
       bb.log.warn("no primary host; local-voice config not pushed");
       return;
     }
-    const config = await currentConfig();
-    await host.call(
-      "configure",
-      config,
-      signal === undefined ? { hostId: primaryHostId } : { hostId: primaryHostId, signal },
-    );
-    bb.log.info(`local-voice config pushed to ${primaryHostId}: ${JSON.stringify(config)}`);
+    const config = { ...(await currentConfig()), claudeProxy: claudeProxyFor(primaryHostId) };
+    const options = signal === undefined ? { hostId: primaryHostId } : { hostId: primaryHostId, signal };
+    await host.call("configure", config, options);
+    // The key goes over on its own and is never logged; an empty setting leaves the host's key file (or env) alone.
+    const key = (await settings.get()).elevenlabsApiKey;
+    const keySet = typeof key === "string" && key.trim() !== "";
+    if (keySet) await host.call("setApiKey", { key: key.trim() }, options);
+    bb.log.info(`local-voice config pushed to ${primaryHostId}: ${JSON.stringify(config)}${keySet ? " (+ ElevenLabs key)" : ""}`);
   }
 
   bb.background.service("config-sync", {

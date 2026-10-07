@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WhisperConfig } from "./contract.js";
-import { selectEngine, transcribeWithLlama } from "./engine.js";
+import { selectEngine, transcribeWithScribe, type FormatFn } from "./engine.js";
 import {
   MODEL_DOWNLOAD_BASE,
   SILENCE_DBFS,
@@ -92,6 +92,10 @@ export interface TranscribeDeps {
   tempRoot: string;
   run: Runner;
   signal: AbortSignal;
+  /** The ElevenLabs key (null = not configured). */
+  apiKey?: string | null;
+  /** The Claude formatter; null/absent = keep Scribe's text. */
+  format?: FormatFn | null;
   fetchImpl?: typeof fetch;
 }
 export interface TranscribeDetails {
@@ -102,7 +106,7 @@ export interface TranscribeDetails {
   durationMs: number;
   asrMs: number | null;
   polishMs: number | null;
-  engine: "llama" | "whisper";
+  engine: "scribe" | "whisper";
 }
 export type TranscribeResult =
   | { ok: true; model: string; text: string; details: TranscribeDetails }
@@ -126,7 +130,7 @@ export async function transcribeAudio(
   req: TranscribeRequest,
   deps: TranscribeDeps,
 ): Promise<TranscribeResult> {
-  const engine = selectEngine(req.model);
+  const engine = selectEngine(req.model, deps.config.sttModel);
   let whisperModelPath: string | null = null;
   if (engine.kind === "whisper") {
     const modelsDir = expandHome(deps.config.modelsDir, deps.homeDir);
@@ -174,14 +178,14 @@ export async function transcribeAudio(
       };
     }
 
-    if (engine.kind === "llama") {
-      const result = await transcribeWithLlama({
+    if (engine.kind === "scribe") {
+      const result = await transcribeWithScribe({
         wav: wavBytes,
         model: engine.model,
-        serverUrl: deps.config.serverUrl,
+        apiKey: deps.apiKey ?? null,
         polish: deps.config.polish,
         translate: deps.config.translate,
-        polishModel: deps.config.polishModel,
+        format: deps.format ?? null,
         remainingMs: remaining,
         signal: deps.signal,
         ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
@@ -199,7 +203,7 @@ export async function transcribeAudio(
           durationMs,
           asrMs: result.asrMs,
           polishMs: result.polishMs,
-          engine: "llama",
+          engine: "scribe",
         },
       };
     }

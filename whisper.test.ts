@@ -28,11 +28,12 @@ describe("configFromSettings", () => {
     expect(configFromSettings({ modelsDir: "  /models " }).modelsDir).toBe("/models");
     expect(configFromSettings({ modelsDir: "   " }).modelsDir).toBe(DEFAULT_CONFIG.modelsDir);
   });
-  it("trims serverUrl and translateModel and falls back to defaults", () => {
-    expect(configFromSettings({ serverUrl: " http://10.0.0.2:9000/ " }).serverUrl).toBe("http://10.0.0.2:9000");
-    expect(configFromSettings({ serverUrl: "" }).serverUrl).toBe(DEFAULT_CONFIG.serverUrl);
-    expect(configFromSettings({ polishModel: " gemma-4-e2b " }).polishModel).toBe("gemma-4-e2b");
-    expect(configFromSettings({ polishModel: "" }).polishModel).toBe(DEFAULT_CONFIG.polishModel);
+  it("trims the model settings, falls back to defaults and ignores retired router settings", () => {
+    expect(configFromSettings({ sttModel: " scribe_v1 " }).sttModel).toBe("scribe_v1");
+    expect(configFromSettings({ sttModel: "" }).sttModel).toBe("scribe_v2");
+    expect(configFromSettings({ formatModel: " sonnet " }).formatModel).toBe("sonnet");
+    expect(configFromSettings({ formatModel: "" }).formatModel).toBe("haiku");
+    expect(configFromSettings({ serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-26b", asrModel: "qwen3-asr" })).toEqual(DEFAULT_CONFIG);
     expect(configFromSettings({ polish: false }).polish).toBe(false);
     expect(configFromSettings({}).polish).toBe(true);
   });

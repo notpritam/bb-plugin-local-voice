@@ -1,8 +1,7 @@
 // A recording session: audio arrives in slices while the user is still
 // talking, the wav is decoded progressively, and every ~5 s of speech is cut
 // at a pause and sent to the recogniser right away (four in flight). By the
-// time the user stops, only the tail chunk and one polish pass remain — the
-// wait no longer grows with the length of the clip. The same session, fed
+// time the user stops, only the tail chunk and one formatting pass remain. The same session, fed
 // all at once, is the non-streamed path (retries, the CLI).
 
 export const PCM_BYTES_PER_MS = 32; // 16 kHz mono s16le
@@ -20,8 +19,8 @@ export interface SessionDeps {
   decode: (bytes: Buffer, signal: AbortSignal) => Promise<Buffer>;
   /**
    * One chunk of speech, as a wav, → its transcript in its own language. `context` is the raw
-   * text of the most recent chunk already recognised (or null): Qwen3-ASR takes it as a prompt,
-   * which keeps script and vocabulary consistent across cuts in code-switched speech.
+   * text of the most recent chunk already recognised (or null), for recognisers that take a
+   * prompt (ElevenLabs Scribe does not).
    */
   asr: (wav: Buffer, signal: AbortSignal, context: string | null) => Promise<ChunkText>;
   /** The transcriptionist pass over the joined text; null = polishing off. Returns null to keep the raw text. */
@@ -47,7 +46,7 @@ export interface SessionDeps {
   /** At finish, a tail at least this long is split at pauses into pieces of at least `tailMinMs`, recognised in parallel. */
   tailTargetMs?: number;
   tailMinMs?: number;
-  /** Chunk jobs allowed in flight at once (llama-server slots). */
+  /** Chunk jobs allowed in flight at once (concurrent recogniser requests). */
   maxInFlight?: number;
   /** Cut when at least this much undispatched speech has been decoded. */
   targetMs?: number;
@@ -309,7 +308,8 @@ export class RecordingSession {
     this.decodedMs = totalMs;
     const usableMs = final ? totalMs : Math.max(0, totalMs - this.o.tailGuardMs);
     // Prefer a real pause once `targetMs` of speech is waiting; never let a chunk grow past `maxMs`.
-    this.cutRange(pcm, usableMs, this.o.targetMs, this.o.minMs, this.o.maxMs, 0);
+    // At the end nothing more arrives, so never leave a sliver of a tail behind (recognisers reject or garble it).
+    this.cutRange(pcm, usableMs, this.o.targetMs, this.o.minMs, this.o.maxMs, final ? this.o.tailMinMs : 0);
     if (final) {
       // The tail is on the critical path: a long one is split at pauses so its pieces run on parallel
       // slots — but never into pieces so short that the recogniser loses the phrase.

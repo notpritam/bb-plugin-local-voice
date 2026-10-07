@@ -21,7 +21,8 @@ afterEach(async () => {
 
 function deps(run: Runner, overrides: Partial<Parameters<typeof transcribeAudio>[1]> = {}) {
   return {
-    config: { modelsDir, threads: 4, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" },
+    config: { modelsDir, threads: 4, translate: true, polish: true, sttModel: "scribe_v2", formatModel: "haiku", claudeProxy: null },
+    apiKey: "k-test",
     homeDir: root,
     tempRoot: path.join(root, "tmp"),
     run,
@@ -95,7 +96,7 @@ describe("transcribeAudio", () => {
     const run = vi.fn<Runner>(async () => ok("x"));
     const result = await transcribeAudio(
       request(),
-      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" } }),
+      deps(run, { config: { modelsDir: "~/home-models", threads: 1, translate: false, polish: true, sttModel: "scribe_v2", formatModel: "haiku", claudeProxy: null } }),
     );
     expect(result.ok).toBe(true);
     expect(run.mock.calls[1]![1]).toContain(path.join(root, "home-models", "ggml-small.bin"));
@@ -180,7 +181,7 @@ describe("transcribeAudio", () => {
   });
 });
 
-describe("transcribeAudio via llama-server", () => {
+describe("transcribeAudio via ElevenLabs Scribe", () => {
   const wavBytes = () => {
     // One audible second: the silence gate lets it through and the session cuts a single chunk.
     const data = Buffer.alloc(32000);
@@ -196,13 +197,13 @@ describe("transcribeAudio via llama-server", () => {
     return ok();
   });
 
-  it("sends the converted wav to the llama server and never runs whisper-cli", async () => {
+  it("sends the converted PCM to ElevenLabs (old model names included) and never runs whisper-cli", async () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (String(url).endsWith("/v1/audio/transcriptions")) {
+      if (String(url) === "https://api.elevenlabs.io/v1/speech-to-text") {
         const form = init?.body as FormData;
-        expect(form.get("model")).toBe("qwen3-asr");
-        expect((form.get("file") as File).size).toBe(32044);
-        return new Response(JSON.stringify({ text: "language English<asr_text>hi there" }));
+        expect(form.get("model_id")).toBe("scribe_v2");
+        expect((form.get("file") as File).size).toBe(32000);
+        return new Response(JSON.stringify({ text: "hi there", language_code: "eng" }));
       }
       throw new Error("unexpected " + String(url));
     }) as unknown as typeof fetch;
@@ -211,23 +212,33 @@ describe("transcribeAudio via llama-server", () => {
       ok: true,
       model: "qwen3-asr",
       text: "hi there",
-      details: { rawText: "hi there", language: "English", polished: false, translated: false, durationMs: 1000, asrMs: expect.any(Number), polishMs: null, engine: "llama" },
+      details: { rawText: "hi there", language: "English", polished: false, translated: false, durationMs: 1000, asrMs: expect.any(Number), polishMs: null, engine: "scribe" },
     });
     expect(ffmpegWritesWav.mock.calls.map((c) => c[0])).toEqual(["ffmpeg"]);
   });
 
-  it("does not require a whisper model file for the llama engine", async () => {
+  it("formats Scribe's text with the formatter", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "कल का meeting reschedule कर दो", language_code: "hin" }))) as unknown as typeof fetch;
+    const format = vi.fn(async () => "Kal ka meeting reschedule kar do.");
+    const result = await transcribeAudio(request({ model: "scribe_v2" }), deps(ffmpegWritesWav, { fetchImpl, format }));
+    expect(result).toMatchObject({ ok: true, model: "scribe_v2", text: "Kal ka meeting reschedule kar do.", details: { rawText: "कल का meeting reschedule कर दो", language: "Hindi", polished: true, engine: "scribe" } });
+    expect(format).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not require a whisper model file for Scribe", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "ok" }))) as unknown as typeof fetch;
     const result = await transcribeAudio(request({ model: "qwen3-asr-0.6b" }), deps(ffmpegWritesWav, { fetchImpl }));
     expect(result).toMatchObject({ ok: true, model: "qwen3-asr-0.6b", text: "ok" });
   });
 
-  it("passes llama failures through", async () => {
+  it("passes Scribe failures through", async () => {
     const fetchImpl = vi.fn(async () => {
       throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     }) as unknown as typeof fetch;
     const result = await transcribeAudio(request({ model: "qwen3-asr" }), deps(ffmpegWritesWav, { fetchImpl }));
     expect(result).toMatchObject({ ok: false, code: "service_unavailable" });
+    const unauthorized = vi.fn(async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+    expect(await transcribeAudio(request({ model: "scribe_v2" }), deps(ffmpegWritesWav, { fetchImpl: unauthorized }))).toMatchObject({ ok: false, code: "service_unavailable" });
   });
 });
 

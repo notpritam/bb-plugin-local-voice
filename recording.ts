@@ -1,8 +1,11 @@
-// Host-side runtime for recording sessions: real ffmpeg/llama-server deps
-// wired into RecordingSession, plus the registry of sessions in flight.
+// Host-side runtime for recording sessions: real ffmpeg, ElevenLabs Scribe and
+// Claude formatter deps wired into RecordingSession, plus the registry of
+// sessions in flight.
 import { spawn } from "node:child_process";
-import { ASR_CEILING_MS, POLISH_CEILING_MS, asrRequest, polishRequest } from "./engine.js";
+import { ASR_CEILING_MS, type FormatFn } from "./engine.js";
+import { scribeRequest } from "./scribe.js";
 import { RecordingSession, type SessionResult } from "./stream.js";
+import { wavPcm } from "./whisper.js";
 
 export const DECODE_CEILING_MS = 60_000;
 /** A session nobody has touched for this long is abandoned (the browser went away). */
@@ -58,15 +61,17 @@ export function decodeWithFfmpeg(bytes: Buffer, signal: AbortSignal, timeoutMs =
 }
 
 export interface RecordingConfig {
-  serverUrl: string;
-  asrModel: string;
+  /** ElevenLabs model id (scribe_v2). */
+  sttModel: string;
+  apiKey: string | null;
   polish: boolean;
   translate: boolean;
-  polishModel: string;
+  /** The formatter; null = keep Scribe's text. */
+  format: FormatFn | null;
 }
 
 export interface SessionOptions {
-  /** Slices arrive over time (polish per chunk as they land) vs. the whole clip at once. */
+  /** Slices arrive over time vs. the whole clip at once (retries). Both format once, over the whole text. */
   streaming: boolean;
   fetchImpl?: typeof fetch;
   decode?: (bytes: Buffer, signal: AbortSignal) => Promise<Buffer>;
@@ -74,15 +79,16 @@ export interface SessionOptions {
 
 export function createSession(config: RecordingConfig, o: SessionOptions): RecordingSession {
   const fetchOpt = o.fetchImpl === undefined ? {} : { fetchImpl: o.fetchImpl };
+  const format = config.format;
   return new RecordingSession({
     decode: o.decode ?? decodeWithFfmpeg,
-    asr: (wav, signal, context) => asrRequest({ wav, model: config.asrModel, serverUrl: config.serverUrl, signal, budgetMs: ASR_CEILING_MS, prompt: context, ...fetchOpt }),
-    polish: config.polish
-      ? (text, translate, signal) => polishRequest({ text, translate, model: config.polishModel, serverUrl: config.serverUrl, signal, budgetMs: POLISH_CEILING_MS, ...fetchOpt })
-      : null,
+    // Scribe takes no prompt, so the previous chunk's text (context) goes unused and chunks never wait on each other.
+    asr: (wav, signal) => scribeRequest({ pcm: wavPcm(wav), apiKey: config.apiKey, model: config.sttModel, signal, budgetMs: ASR_CEILING_MS, ...fetchOpt }),
+    polish: config.polish && format !== null ? (text, translate, signal) => format(text, translate, signal) : null,
     translate: config.translate,
-    polishMode: o.streaming ? "groups" : "whole",
-    contextWaitMs: o.streaming ? 2500 : 0,
+    // Arranging a message needs all of it: one formatter pass over the joined text at finish.
+    polishMode: "whole",
+    contextWaitMs: 0,
   });
 }
 

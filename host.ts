@@ -1,14 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { experimental_aiServicesHostContract } from "@get-bb/plugin-sdk/ai-services";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { classifyFetch, classifyText } from "./classify.js";
+import { classifyTexts } from "./classify.js";
 import { SESSION_IDLE_MS, SessionRegistry, createSession, type SessionEntry } from "./recording.js";
-import { selectEngine } from "./engine.js";
-import { generatePersona, profileFetch } from "./profile.js";
-import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, whisperConfigSchema, type Category, type WhisperConfig } from "./contract.js";
+import { formatFn, selectEngine } from "./engine.js";
+import { ClaudeFormatter, poolEnv, type ClaudeRuntime } from "./formatter.js";
+import { generatePersona } from "./profile.js";
+import { LOCAL_VOICE_SERVICE_ID, hostSignals, serverHostContract, whisperConfigSchema, type WhisperConfig } from "./contract.js";
+import { API_KEY_FILE, readApiKey } from "./scribe.js";
 import { runCommand, transcribeAudio } from "./transcribe.js";
 import { DEFAULT_CONFIG, failure } from "./whisper.js";
 
@@ -20,19 +22,40 @@ export const hostContract = defineRpcContract({
 const CONFIG_FILE = "config.json";
 
 async function readConfig(dataDir: string): Promise<WhisperConfig> {
+  let config = DEFAULT_CONFIG;
   try {
     const parsed = whisperConfigSchema.safeParse(
       JSON.parse(await readFile(path.join(dataDir, CONFIG_FILE), "utf8")),
     );
-    return parsed.success ? parsed.data : DEFAULT_CONFIG;
+    if (parsed.success) config = parsed.data;
   } catch {
-    return DEFAULT_CONFIG;
+    // defaults
   }
+  claudeProxy = config.claudeProxy;
+  return config;
 }
 
 async function writeConfig(dataDir: string, config: WhisperConfig): Promise<void> {
   await mkdir(dataDir, { recursive: true });
   await writeFile(path.join(dataDir, CONFIG_FILE), JSON.stringify(config, null, 2));
+}
+
+/** The Claude CLI runs in a private, empty directory beside the host's data (no project settings, no CLAUDE.md). */
+function claudeCwd(dataDir: string): string {
+  return path.join(dataDir, "claude-cwd");
+}
+
+/** The latest config's Claude route; every CLI start reads it (and the pooler's token file) afresh. */
+let claudeProxy: WhisperConfig["claudeProxy"] = null;
+function claudeRuntime(dataDir: string): ClaudeRuntime {
+  return { cwd: claudeCwd(dataDir), env: () => poolEnv(claudeProxy) };
+}
+
+/** One formatter per worker: it keeps a warm spare CLI process while dictation is happening. */
+let formatter: ClaudeFormatter | null = null;
+function formatterFor(dataDir: string): ClaudeFormatter {
+  formatter ??= new ClaudeFormatter(claudeRuntime(dataDir));
+  return formatter;
 }
 
 /** Recording sessions live for the worker's lifetime; the outcome of each is one `rec` signal. */
@@ -74,9 +97,14 @@ async function finishAndEmit(entry: SessionEntry, emit: EmitRec, lease: { dispos
   }
 }
 
-function recordingConfig(config: WhisperConfig, model: string | null) {
-  const asrModel = model ?? config.asrModel;
-  return { serverUrl: config.serverUrl, asrModel, polish: config.polish, translate: config.translate, polishModel: config.polishModel };
+function recordingConfig(config: WhisperConfig, sttModel: string, apiKey: string | null, dataDir: string) {
+  return {
+    sttModel,
+    apiKey,
+    polish: config.polish,
+    translate: config.translate,
+    format: config.polish ? formatFn(formatterFor(dataDir), config.formatModel) : null,
+  };
 }
 
 export default experimental_defineHostEntry({
@@ -84,10 +112,14 @@ export default experimental_defineHostEntry({
   experimental_signals: hostSignals,
   handlers: {
     recStart: async ({ id, mime, model }, context) => {
-      const config = await readConfig(context.experimental_paths.dataDir);
-      const engine = selectEngine(model ?? config.asrModel);
-      if (engine.kind !== "llama") return { ok: false as const, message: "Streaming recordings need the llama-server engine; whisper.cpp models go through bb's own path." };
-      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model), { streaming: true }), startedAt: Date.now() });
+      const dataDir = context.experimental_paths.dataDir;
+      const config = await readConfig(dataDir);
+      const engine = selectEngine(model ?? config.sttModel, config.sttModel);
+      if (engine.kind !== "scribe") return { ok: false as const, message: "Streaming recordings need ElevenLabs Scribe; whisper.cpp models go through bb's own path." };
+      // Start the formatter's CLI now, while the user is still talking.
+      if (config.polish) formatterFor(dataDir).warm(config.formatModel, config.translate);
+      const apiKey = await readApiKey(dataDir);
+      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model, apiKey, dataDir), { streaming: true }), startedAt: Date.now() });
       // Retained so the daemon does not idle-stop the worker mid-recording.
       const lease = context.experimental_retainWorker();
       (entry as SessionEntry & { lease?: typeof lease }).lease = lease;
@@ -128,29 +160,39 @@ export default experimental_defineHostEntry({
       return { ok: true as const };
     },
     recTranscribe: async ({ id, mime, model, data }, context) => {
-      const config = await readConfig(context.experimental_paths.dataDir);
-      const engine = selectEngine(model ?? config.asrModel);
-      if (engine.kind !== "llama") return { ok: false as const, message: "Retries need the llama-server engine." };
-      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model), { streaming: false }), startedAt: Date.now() });
+      const dataDir = context.experimental_paths.dataDir;
+      const config = await readConfig(dataDir);
+      const engine = selectEngine(model ?? config.sttModel, config.sttModel);
+      if (engine.kind !== "scribe") return { ok: false as const, message: "Retries need ElevenLabs Scribe." };
+      if (config.polish) formatterFor(dataDir).warm(config.formatModel, config.translate);
+      const apiKey = await readApiKey(dataDir);
+      const entry = sessions.start({ id, mime, model: engine.model, session: createSession(recordingConfig(config, engine.model, apiKey, dataDir), { streaming: false }), startedAt: Date.now() });
       entry.session.append(Buffer.from(data, "base64"));
       void finishAndEmit(entry, (payload) => context.experimental_emitSignal("rec", payload), context.experimental_retainWorker());
       return { ok: true as const };
     },
     configure: async (config, context) => {
       await writeConfig(context.experimental_paths.dataDir, config);
+      claudeProxy = config.claudeProxy;
+      return { ok: true as const };
+    },
+    setApiKey: async ({ key }, context) => {
+      const dataDir = context.experimental_paths.dataDir;
+      await mkdir(dataDir, { recursive: true });
+      const file = path.join(dataDir, API_KEY_FILE);
+      await writeFile(file, `${key.trim()}\n`, { mode: 0o600 });
+      await chmod(file, 0o600);
       return { ok: true as const };
     },
     classify: async ({ texts }, context) => {
-      const config = await readConfig(context.experimental_paths.dataDir);
-      const labels: (Category | null)[] = [];
-      for (const text of texts) {
-        labels.push(await classifyText({ text, serverUrl: config.serverUrl, model: config.polishModel, signal: context.signal, fetchImpl: classifyFetch }));
-      }
-      return { labels };
+      const dataDir = context.experimental_paths.dataDir;
+      const config = await readConfig(dataDir);
+      return { labels: await classifyTexts(claudeRuntime(dataDir), { texts, model: config.formatModel, signal: context.signal }) };
     },
     profile: async ({ sample, stats }, context) => {
-      const config = await readConfig(context.experimental_paths.dataDir);
-      const persona = await generatePersona({ sample, stats, serverUrl: config.serverUrl, model: config.polishModel, signal: context.signal, fetchImpl: profileFetch });
+      const dataDir = context.experimental_paths.dataDir;
+      const config = await readConfig(dataDir);
+      const persona = await generatePersona(claudeRuntime(dataDir), { sample, stats, model: config.formatModel, signal: context.signal });
       return persona === null ? { ok: false as const } : { ok: true as const, ...persona };
     },
     "ai.inference.complete": async (input) =>
@@ -162,7 +204,11 @@ export default experimental_defineHostEntry({
       if (input.serviceId !== LOCAL_VOICE_SERVICE_ID) {
         return failure("request_failed", `This plugin serves no AI service "${input.serviceId}".`);
       }
-      const config = await readConfig(context.experimental_paths.dataDir);
+      const dataDir = context.experimental_paths.dataDir;
+      const config = await readConfig(dataDir);
+      // Boot the formatter's CLI while Scribe works.
+      const formatModel = config.formatModel;
+      if (config.polish && selectEngine(input.model, config.sttModel).kind === "scribe") formatterFor(dataDir).warm(formatModel, config.translate);
       try {
         const result = await transcribeAudio(
           {
@@ -178,6 +224,8 @@ export default experimental_defineHostEntry({
             tempRoot: context.experimental_paths.tempDir,
             run: runCommand,
             signal: context.signal,
+            apiKey: await readApiKey(dataDir),
+            format: config.polish ? formatFn(formatterFor(dataDir), formatModel) : null,
           },
         );
         if (!result.ok) return result;
@@ -208,5 +256,10 @@ export default experimental_defineHostEntry({
         return failure("request_failed", error instanceof Error ? error.message : String(error));
       }
     },
+  },
+  dispose: async () => {
+    sessions.cancelAll();
+    formatter?.dispose();
+    formatter = null;
   },
 });

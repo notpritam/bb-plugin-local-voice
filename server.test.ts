@@ -36,7 +36,7 @@ describe("server", () => {
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
     expect(harness.inspection.registrations.aiServiceRegistrations).toEqual([
-      { id: "local", displayName: "Local Voice (Qwen3-ASR + Gemma on this host)", kinds: ["voice"] },
+      { id: "local", displayName: "Local Voice (ElevenLabs Scribe + Claude formatting)", kinds: ["voice"] },
     ]);
   });
 
@@ -49,21 +49,37 @@ describe("server", () => {
     expect(harness.inspection.experimental_hostRpcCalls[0]).toMatchObject({
       method: "configure",
       hostId: "host-1",
-      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, serverUrl: "http://127.0.0.1:8091", polishModel: "gemma-4-e4b", asrModel: "qwen3-asr" },
+      input: { modelsDir: "~/.bb/whisper-models", threads: 12, translate: true, polish: true, sttModel: "scribe_v2", formatModel: "haiku" },
     });
+    // No key in the settings: nothing but the config goes over.
+    expect(harness.inspection.experimental_hostRpcCalls.map((c) => c.method)).toEqual(["configure"]);
     service.controller.abort();
     await service.done;
+  });
+
+  it("pushes the ElevenLabs key on its own call and never logs it", async () => {
+    const { bb, harness, callHostRpc } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.setSettings({ elevenlabsApiKey: " sk-very-secret " });
+    await vi.waitFor(() => expect(harness.inspection.experimental_hostRpcCalls.some((c) => c.method === "setApiKey")).toBe(true));
+    expect(callHostRpc).toHaveBeenCalled();
+    const call = harness.inspection.experimental_hostRpcCalls.find((c) => c.method === "setApiKey")!;
+    expect(call.input).toEqual({ key: "sk-very-secret" });
+    const configure = harness.inspection.experimental_hostRpcCalls.find((c) => c.method === "configure")!;
+    expect(JSON.stringify(configure.input)).not.toContain("sk-very-secret");
+    expect(harness.inspection.logEntries.some((e) => e.message.includes("sk-very-secret"))).toBe(false);
   });
 
   it("re-pushes when a setting changes, parsing threads and modelsDir", async () => {
     const { bb, harness, callHostRpc } = makeHost();
     await plugin(bb);
     cleanup = () => harness.lifecycle.dispose();
-    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false, polish: false, serverUrl: "http://10.0.0.2:9000/", polishModel: " gemma-4-e2b " });
+    await harness.behavior.setSettings({ threads: "6", modelsDir: " /opt/models ", translate: false, polish: false, sttModel: " scribe_v1 ", formatModel: " sonnet " });
     await vi.waitFor(() => expect(callHostRpc).toHaveBeenCalled());
     expect(harness.inspection.experimental_hostRpcCalls.at(-1)).toMatchObject({
       method: "configure",
-      input: { modelsDir: "/opt/models", threads: 6, translate: false, polish: false, serverUrl: "http://10.0.0.2:9000", polishModel: "gemma-4-e2b" },
+      input: { modelsDir: "/opt/models", threads: 6, translate: false, polish: false, sttModel: "scribe_v1", formatModel: "sonnet" },
     });
   });
 

@@ -2,7 +2,7 @@ import type { ClipSignal } from "../contract.js";
 import { countWords, fillerCount, wordEdits } from "./text.js";
 
 export type Surface = "composer" | "field" | "cli" | "other";
-export type Engine = "llama" | "whisper";
+export type Engine = "scribe" | "llama" | "whisper";
 
 export interface NewClip {
   at: number;

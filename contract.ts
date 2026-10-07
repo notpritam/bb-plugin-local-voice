@@ -10,18 +10,18 @@ export const whisperConfigSchema = z
     modelsDir: z.string().min(1),
     /** whisper-cli thread count. */
     threads: z.number().int().min(1).max(64),
-    /** Polisher outputs English (translating when needed); off keeps the spoken language. */
+    /** The formatter outputs English (translating when needed); off keeps the spoken language, Hindi in Latin letters. */
     translate: z.boolean(),
-    /** Run the polisher (fillers, punctuation, lists, identifiers) on every clip. */
+    /** Run the formatter (fillers, punctuation, lists, identifiers, script) on every clip. */
     polish: z.boolean(),
-    /** llama-server router serving the ASR and polisher models. */
-    serverUrl: z.string().min(1),
-    /** Router alias of the polisher model. */
-    polishModel: z.string().min(1),
-    /** Router alias of the recogniser used by the plugin's own recording path. */
-    asrModel: z.string().min(1).default("qwen3-asr"),
-  })
-  .strict();
+    /** ElevenLabs speech-to-text model id. */
+    sttModel: z.string().min(1).default("scribe_v2"),
+    /** Claude model alias for the formatter, classify and the voice profile. */
+    formatModel: z.string().min(1).default("haiku"),
+    /** bb's Account Pooler route for Claude on this host (null = the host's own Claude Code login). The token stays in its file. */
+    claudeProxy: z.object({ baseUrl: z.string().min(1), tokenFile: z.string().min(1) }).nullable().default(null),
+  });
+// Not strict on purpose: a config.json saved by an older version (serverUrl, polishModel, asrModel) still parses; unknown keys are dropped.
 export type WhisperConfig = z.infer<typeof whisperConfigSchema>;
 
 const clipId = z.string().regex(/^[a-z0-9-]{8,64}$/u);
@@ -37,6 +37,11 @@ const recAck = z.union([z.object({ ok: z.literal(true) }).strict(), z.object({ o
 export const serverHostContract = defineRpcContract({
   configure: {
     input: whisperConfigSchema,
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  /** Store the ElevenLabs key (from the secret setting) in the host's data dir, mode 600. */
+  setApiKey: {
+    input: z.object({ key: z.string().min(1).max(512) }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
   // ---- Recording sessions: slices stream in, chunks are recognised as they land,
@@ -89,7 +94,7 @@ export const clipSignalSchema = z
     translated: z.boolean(),
     asrMs: z.number().int().nonnegative().nullable(),
     polishMs: z.number().int().nonnegative().nullable(),
-    engine: z.enum(["llama", "whisper"]),
+    engine: z.enum(["scribe", "llama", "whisper"]),
     model: z.string(),
   })
   .strict();

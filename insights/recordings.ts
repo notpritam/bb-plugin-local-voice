@@ -28,7 +28,8 @@ export interface RecordingDeps {
   bb: Pick<BbPluginApi, "rpc" | "http" | "realtime" | "log" | "background">;
   store: InsightsStore;
   host: RecordingHostClient;
-  asrModel: () => Promise<string>;
+  /** The ElevenLabs model recorded on a new clip. */
+  sttModel: () => Promise<string>;
   retentionDays: () => Promise<number>;
   now?: () => number;
 }
@@ -116,7 +117,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
       polished: payload.polished,
       asrMs: payload.asrMs,
       polishMs: payload.polishMs,
-      engine: "llama",
+      engine: "scribe",
       model: payload.model,
     });
     hostBroken.delete(payload.id);
@@ -128,7 +129,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
     rec_start: async ({ uid, surface, mime }) => {
       if (store.clipByUid(uid) !== null) return { ok: false as const, message: "That recording id is already in use." };
       const at = now();
-      const id = store.startRecording({ uid, at, day: dayOf(at), surface: surface as Surface, mime, model: await deps.asrModel() });
+      const id = store.startRecording({ uid, at, day: dayOf(at), surface: surface as Surface, mime, model: await deps.sttModel() });
       publish(id, "recording", 0, dayOf(at));
       await hostCall(uid, () => host.call("recStart", { id: uid, mime, model: null }));
       return { ok: true as const, id };
@@ -170,7 +171,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
     rec_transcribe: async ({ uid, surface, mime, data }) => {
       if (store.clipByUid(uid) !== null) return { ok: false as const, message: "That recording id is already in use." };
       const at = now();
-      const id = store.startRecording({ uid, at, day: dayOf(at), surface: surface as Surface, mime, model: await deps.asrModel() });
+      const id = store.startRecording({ uid, at, day: dayOf(at), surface: surface as Surface, mime, model: await deps.sttModel() });
       store.appendAudio(id, Buffer.from(data, "base64"), at);
       store.setStatus(id, "transcribing");
       publish(id, "transcribing", 0, dayOf(at));

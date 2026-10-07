@@ -58,7 +58,7 @@ export function VoiceTab() {
       {profile === null ? (
         <section className="bbv-card bbv-hero">
           <h2 className="bbv-serif">Your voice profile is on its way</h2>
-          <p className="bbv-muted">Dictate about {fmtInt(wordsUntilNext)} more words and Local Voice will write it — locally, from what you actually say.</p>
+          <p className="bbv-muted">Dictate about {fmtInt(wordsUntilNext)} more words and Local Voice will write it from what you actually say.</p>
         </section>
       ) : (
         <>

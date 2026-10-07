@@ -17,7 +17,7 @@ export function VoicePage(_props: PluginNavPanelProps) {
       <header className="bbv-header">
         <div>
           <h1>Voice</h1>
-          <p className="bbv-header-copy">Everything you dictate through Local Voice — every clip with its audio, counted and read back to you. Nothing here leaves this machine.</p>
+          <p className="bbv-header-copy">Everything you dictate through Local Voice — every clip with its audio, counted and read back to you. Speech is recognised by ElevenLabs and formatted by Claude on your own login; the history stays on your bb server.</p>
         </div>
         <button
           type="button"

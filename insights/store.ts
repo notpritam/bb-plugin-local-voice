@@ -272,7 +272,7 @@ export class InsightsStore {
     const result = this.db
       .prepare(
         `INSERT INTO clips (at, day, surface, language, duration_ms, raw_text, text, raw_words, words, fixes, fillers, translated, polished, asr_ms, polish_ms, engine, model, status, mime, attempts, uid)
-         VALUES (@at, @day, @surface, NULL, 0, '', '', 0, 0, 0, 0, 0, 0, NULL, NULL, 'llama', @model, 'recording', @mime, 0, @uid)`,
+         VALUES (@at, @day, @surface, NULL, 0, '', '', 0, 0, 0, 0, 0, 0, NULL, NULL, 'scribe', @model, 'recording', @mime, 0, @uid)`,
       )
       .run(r);
     return Number(result.lastInsertRowid);

@@ -6,9 +6,9 @@ export const DEFAULT_CONFIG: WhisperConfig = {
   threads: 12,
   translate: true,
   polish: true,
-  serverUrl: "http://127.0.0.1:8091",
-  polishModel: "gemma-4-e4b",
-  asrModel: "qwen3-asr",
+  sttModel: "scribe_v2",
+  formatModel: "haiku",
+  claudeProxy: null,
 };
 export const MODEL_DOWNLOAD_BASE =
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -33,22 +33,21 @@ const MODEL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MIN_THREADS = 1;
 const MAX_THREADS = 64;
 
-/** Settings arrive as loose strings/booleans; normalize once here. */
+/** Settings arrive as loose strings/booleans (and may carry retired keys such as serverUrl); normalize once here. */
 export function configFromSettings(values: {
   modelsDir?: unknown;
   threads?: unknown;
   translate?: unknown;
   polish?: unknown;
-  serverUrl?: unknown;
-  polishModel?: unknown;
-  asrModel?: unknown;
+  sttModel?: unknown;
+  formatModel?: unknown;
+  [retired: string]: unknown;
 }): WhisperConfig {
   const str = (value: unknown, fallback: string) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
   const modelsDir = str(values.modelsDir, DEFAULT_CONFIG.modelsDir);
-  const serverUrl = str(values.serverUrl, DEFAULT_CONFIG.serverUrl).replace(/\/+$/u, "");
-  const polishModel = str(values.polishModel, DEFAULT_CONFIG.polishModel);
-  const asrModel = str(values.asrModel, DEFAULT_CONFIG.asrModel);
+  const sttModel = str(values.sttModel, DEFAULT_CONFIG.sttModel);
+  const formatModel = str(values.formatModel, DEFAULT_CONFIG.formatModel);
   const parsedThreads =
     typeof values.threads === "string" ? Number.parseInt(values.threads, 10) : Number.NaN;
   const threads = Number.isFinite(parsedThreads)
@@ -57,7 +56,7 @@ export function configFromSettings(values: {
   const translate =
     typeof values.translate === "boolean" ? values.translate : DEFAULT_CONFIG.translate;
   const polish = typeof values.polish === "boolean" ? values.polish : DEFAULT_CONFIG.polish;
-  return { modelsDir, threads, translate, polish, serverUrl, polishModel, asrModel };
+  return { modelsDir, threads, translate, polish, sttModel, formatModel, claudeProxy: null };
 }
 
 export function expandHome(p: string, homeDir: string): string {
