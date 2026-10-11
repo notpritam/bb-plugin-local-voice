@@ -75,7 +75,7 @@ async function finishAndEmit(entry: SessionEntry, emit: EmitRec, lease: { dispos
         id: entry.id,
         at,
         mime: entry.mime,
-        model: entry.model,
+        model: result.model ?? entry.model,
         language: result.language,
         durationMs: result.durationMs,
         rawText: result.rawText,

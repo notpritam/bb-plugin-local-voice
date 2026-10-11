@@ -91,10 +91,12 @@ describe("createStreamingRecorder", () => {
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "rec_append")).toHaveLength(2));
     const text = await recorder.stop(new AbortController().signal);
     expect(text).toBe("Hello there.");
-    expect(calls.map((c) => c.method)).toEqual(["rec_start", "rec_append", "rec_append", "rec_append", "rec_finish", "rec_result"]);
+    // Stop does not wait for the last slice's append: it tells the server to expect three.
+    await vi.waitFor(() => expect(calls.map((c) => c.method)).toEqual(["rec_start", "rec_append", "rec_append", "rec_finish", "rec_result", "rec_append"]));
     expect(calls[0]!.input).toMatchObject({ surface: "field", mime: "audio/webm" });
     expect((calls[1]!.input as { seq: number; data: string })).toMatchObject({ seq: 0, data: btoa("one") });
-    expect((calls[3]!.input as { data: string }).data).toBe(btoa("tail"));
+    expect(calls[3]!.input).toEqual({ uid: expect.any(String), appends: 3, wait: true });
+    expect((calls[5]!.input as { data: string }).data).toBe(btoa("tail"));
   });
 
   it("falls back to sending the whole clip when the start call failed", async () => {

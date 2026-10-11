@@ -4,17 +4,17 @@
 
 Speak into any text box in [bb](https://getbb.app) and get clean, written text back, in any language, out as English or as Hinglish in Latin letters.
 
-- **Recognition:** [ElevenLabs Scribe v2](https://elevenlabs.io/docs/capabilities/speech-to-text) (batch), called from your bb host. Hindi, Hinglish, English and 90+ languages; fillers dropped (`no_verbatim`), your product names passed as keyterms. Hindi always comes back in Devanagari; the formatter fixes the script.
+- **Recognition:** [ElevenLabs Scribe v2 Realtime](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime), streamed from your bb host while you talk (batch [Scribe v2](https://elevenlabs.io/docs/capabilities/speech-to-text) for retries and as the fallback). English with Hindi as the second language, so Hinglish openings are not mistaken for another language; fillers dropped (`no_verbatim`), your product names passed as keyterms. Hindi comes back in Devanagari; the formatter fixes the script.
 - **Formatting:** Claude (Haiku by default) through the Claude Agent SDK on the host's own Claude Code login (or bb's Account Pooler on that host) — no API key. It cleans the dictation like a transcriptionist: fillers and false starts out, punctuation, numbers, paragraphs and lists, spelled-out file extensions (`dot t s x` → `.tsx`), names kept; Hindi written in Latin letters, or the whole message in English (switchable). A warm Claude process is started when you start talking, so formatting takes ~1.2–1.6 s.
 - **Everywhere:** bb's composer mic just works; a small round mic docks to every other text field (Ctrl+Shift+Space).
-- **Instant, any length:** audio streams to the host *while you talk* and is recognised in ~5 s chunks, four in flight; when you stop, only the last chunk and one formatting pass remain. No timeout, no length limit.
+- **Fast, any length:** audio streams to the host *while you talk* (each upload carries every slice queued so far, so it keeps pace on a slow link), is decoded by ffmpeg as it arrives and recognised live; Stop is one request that carries the last slices and comes back with the text. What is left after Stop is ~0.3 s of recognition and one formatting pass. If the realtime link fails, the clip goes through batch Scribe instead. No timeout, no length limit.
 - **Audio first:** every clip is kept from its first slice. A failed transcription shows in **History** with a Retry button; Play, Copy, Transcribe again and Delete are there too.
 - **Insights:** words dictated, WPM, fixes made, categories, streak heatmap, an LLM-written *voice profile*, and a public **leaderboard**.
 - **Where your words go:** audio goes to ElevenLabs, the transcript to Claude on your own login; clips, audio and insights stay in the plugin's SQLite on your bb server. The leaderboard only ever receives `{ day, words, clips }` and a display name.
 
-Measured in the real bb app (composer mic, 1.3.0): the text lands 2.3–2.6 s after you stop for an 8 s take (English or Hinglish) and 2.7 s for a 20 s one; Scribe takes 0.6–1.1 s a chunk and the formatter 1.1–1.6 s. `bb voice transcribe` (whole clip, bb's 10 s budget) takes ~2.3–3 s for 4–20 s clips and ~6 s for a 72 s one.
+Measured in the real bb app (composer mic, 1.4.0, with 900 ms added to every request to stand in for a remote link): the text lands 2.3 s after you stop for a 21 s take; recognition takes 0.3–0.5 s after Stop and the formatter ~1.4 s (the first dictation after a restart pays ~2 s more while Claude warms up). 1.3.0 needed ~4.5–5 s on the same link. `bb voice transcribe` (whole clip, bb's 10 s budget) takes ~2.3–3 s for 4–20 s clips and ~6 s for a 72 s one.
 
-1.3.0 replaced the local llama-server router (Qwen3-ASR + Gemma 4) with ElevenLabs Scribe + Claude; `host/setup.sh` and its systemd unit are gone.
+1.4.0 moved live recordings to Scribe v2 Realtime and made Stop a single request. 1.3.0 replaced the local llama-server router (Qwen3-ASR + Gemma 4) with ElevenLabs Scribe + Claude; `host/setup.sh` and its systemd unit are gone.
 
 ## Install
 

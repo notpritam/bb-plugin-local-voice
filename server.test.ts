@@ -353,6 +353,25 @@ describe("recordings", () => {
     expect(harness.inspection.realtimeSignals.some((s) => s.channel === "voice-history")).toBe(true);
   });
 
+  it("finishes in one call: waits for the append still in flight, adds the tail after it, and answers with the text", async () => {
+    const { bb, harness } = makeHost();
+    await plugin(bb);
+    cleanup = () => harness.lifecycle.dispose();
+    await harness.behavior.callRpc("rec_start", { uid, surface: "composer", mime: "audio/webm" });
+    await harness.behavior.callRpc("rec_append", { uid, seq: 0, data: Buffer.from("abc").toString("base64") });
+    // Stop: the client counts two appends (one still on its way) and sends the rest along.
+    const finishing = harness.behavior.callRpc("rec_finish", { uid, appends: 2, tail: Buffer.from("ghi").toString("base64"), wait: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.inspection.experimental_hostRpcCalls.map((c) => c.method)).toEqual(["recStart", "recAppend"]);
+    await harness.behavior.callRpc("rec_append", { uid, seq: 1, data: Buffer.from("def").toString("base64") });
+    await vi.waitFor(() => expect(harness.inspection.experimental_hostRpcCalls.map((c) => c.method)).toEqual(["recStart", "recAppend", "recAppend", "recAppend", "recFinish"]));
+    expect(harness.inspection.experimental_hostRpcCalls[3]).toMatchObject({ input: { id: uid, data: Buffer.from("ghi").toString("base64") } });
+    await harness.behavior.experimental_emitHostSignal("host-1", "rec", recOk());
+    expect(await finishing).toEqual({ ok: true, result: { status: "done", id: 1, text: "The deploy failed." } });
+    const audio = await harness.behavior.fetchHttp("GET", "/clip-audio?id=1");
+    expect(Buffer.from(await audio.arrayBuffer()).toString()).toBe("abcdefghi");
+  });
+
   it("keeps the audio and marks the clip failed when the host is unreachable, then retries from the kept audio", async () => {
     const { bb, harness, callHostRpc } = makeHost();
     callHostRpc.mockImplementation(async ({ method }) => {

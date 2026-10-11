@@ -72,6 +72,8 @@ export type SessionResult =
       polished: boolean;
       translated: boolean;
       chunks: number;
+      /** The model that answered when it differs from the session's (Scribe v2 Realtime). */
+      model?: string;
     }
   | { ok: false; code: "cancelled" | "asr_failed" | "decode_failed"; message: string; cause?: unknown };
 

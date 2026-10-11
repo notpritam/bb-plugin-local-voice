@@ -1,8 +1,10 @@
 // Host-side runtime for recording sessions: real ffmpeg, ElevenLabs Scribe and
-// Claude formatter deps wired into RecordingSession, plus the registry of
+// Claude formatter deps wired into RealtimeSession (live recordings) and
+// RecordingSession (retries, and the fallback), plus the registry of
 // sessions in flight.
 import { spawn } from "node:child_process";
 import { ASR_CEILING_MS, type FormatFn } from "./engine.js";
+import { RealtimeSession, type RealtimeDeps, type Session } from "./realtime.js";
 import { scribeRequest } from "./scribe.js";
 import { RecordingSession, type SessionResult } from "./stream.js";
 import { wavPcm } from "./whisper.js";
@@ -77,14 +79,22 @@ export interface SessionOptions {
   decode?: (bytes: Buffer, signal: AbortSignal) => Promise<Buffer>;
 }
 
-export function createSession(config: RecordingConfig, o: SessionOptions): RecordingSession {
-  const fetchOpt = o.fetchImpl === undefined ? {} : { fetchImpl: o.fetchImpl };
+/** A live recording streams to Scribe v2 Realtime; a whole clip (and any realtime failure) takes the batch path. */
+export function createSession(config: RecordingConfig, o: SessionOptions): Session {
   const format = config.format;
+  const polish: RealtimeDeps["polish"] = config.polish && format !== null ? (text, translate, signal) => format(text, translate, signal) : null;
+  const batch = () => batchSession(config, polish, o);
+  if (!o.streaming || config.apiKey === null) return batch();
+  return new RealtimeSession({ apiKey: config.apiKey, polish, translate: config.translate, fallback: batch });
+}
+
+function batchSession(config: RecordingConfig, polish: RealtimeDeps["polish"], o: SessionOptions): RecordingSession {
+  const fetchOpt = o.fetchImpl === undefined ? {} : { fetchImpl: o.fetchImpl };
   return new RecordingSession({
     decode: o.decode ?? decodeWithFfmpeg,
     // Scribe takes no prompt, so the previous chunk's text (context) goes unused and chunks never wait on each other.
     asr: (wav, signal) => scribeRequest({ pcm: wavPcm(wav), apiKey: config.apiKey, model: config.sttModel, signal, budgetMs: ASR_CEILING_MS, ...fetchOpt }),
-    polish: config.polish && format !== null ? (text, translate, signal) => format(text, translate, signal) : null,
+    polish,
     translate: config.translate,
     // Arranging a message needs all of it: one formatter pass over the joined text at finish.
     polishMode: "whole",
@@ -96,7 +106,7 @@ export interface SessionEntry {
   id: string;
   mime: string;
   model: string;
-  session: RecordingSession;
+  session: Session;
   startedAt: number;
   /** Set once finish() has been requested; the outcome is emitted as a signal. */
   finishing: boolean;
@@ -137,4 +147,4 @@ export class SessionRegistry {
   }
 }
 
-export type { SessionResult };
+export type { Session, SessionResult };

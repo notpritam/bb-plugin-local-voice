@@ -10,6 +10,8 @@ import { recordingRpcContract, type RecResultDto } from "./rpc.js";
 
 /** Longest a `rec_result` call waits before answering `pending`. */
 export const RESULT_WAIT_MS = 25_000;
+/** Longest `rec_finish` waits for appends the client sent just before Stop; past it the tail goes in anyway. */
+export const APPEND_WAIT_MS = 10_000;
 /** A row still in progress after this long is a recording that never came back. */
 export const STUCK_AFTER_MS = 10 * 60_000;
 /** bb caps a host call at 8 MiB; base64 of this many audio bytes stays under it. */
@@ -42,6 +44,37 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
   const waiters = new Map<string, Set<(o: Outcome) => void>>();
   /** Sessions whose host calls failed: audio keeps landing in SQLite, the finish fails with the reason. */
   const hostBroken = new Map<string, string>();
+  /** Appends stored and forwarded per recording, and the finishes waiting for a count. */
+  const landed = new Map<string, number>();
+  const landedWaiters = new Map<string, Set<() => void>>();
+
+  function appendLanded(uid: string): void {
+    landed.set(uid, (landed.get(uid) ?? 0) + 1);
+    for (const wake of landedWaiters.get(uid) ?? []) wake();
+  }
+  /** Resolve once `count` appends have landed, or after APPEND_WAIT_MS. */
+  async function appendsLanded(uid: string, count: number): Promise<void> {
+    const deadline = Date.now() + APPEND_WAIT_MS;
+    while ((landed.get(uid) ?? 0) < count && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const set = landedWaiters.get(uid) ?? new Set();
+        landedWaiters.set(uid, set);
+        const wake = () => {
+          clearTimeout(timer);
+          set.delete(wake);
+          resolve();
+        };
+        const timer = setTimeout(wake, Math.max(1, deadline - Date.now()));
+        set.add(wake);
+      });
+    }
+    landedWaiters.delete(uid);
+  }
+  async function appendSlice(uid: string, clipId: number, seq: number, data: string): Promise<void> {
+    store.appendAudio(clipId, Buffer.from(data, "base64"), now());
+    if (!hostBroken.has(uid)) await hostCall(uid, () => host.call("recAppend", { id: uid, seq, data }));
+    appendLanded(uid);
+  }
 
   function settle(uid: string, outcome: Outcome): void {
     const set = waiters.get(uid);
@@ -55,6 +88,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
   function fail(uid: string, id: number, day: string, message: string): void {
     store.failClip(id, message);
     hostBroken.delete(uid);
+    landed.delete(uid);
     publish(id, "failed", 0, day);
     settle(uid, { status: "failed", id, message });
   }
@@ -73,7 +107,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
   }
 
   /** Answer now when the clip is settled; otherwise hold the call until the `rec` signal lands (or RESULT_WAIT_MS). */
-  function waitFor(clip: ReturnType<InsightsStore["clip"]>): Promise<RecResultDto> {
+  function waitFor(clip: ReturnType<InsightsStore["clip"]>, waitMs = RESULT_WAIT_MS): Promise<RecResultDto> {
     if (clip === null) return Promise.resolve({ status: "failed", id: 0, message: "No recording with that id." });
     if (clip.status === "done") return Promise.resolve({ status: "done", id: clip.id, text: clip.text });
     if (clip.status === "failed") return Promise.resolve({ status: "failed", id: clip.id, message: clip.error ?? "Transcription failed." });
@@ -84,7 +118,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
       const timer = setTimeout(() => {
         set.delete(done);
         resolve({ status: "pending" });
-      }, RESULT_WAIT_MS);
+      }, waitMs);
       const done = (outcome: Outcome) => {
         clearTimeout(timer);
         resolve(outcome);
@@ -137,23 +171,26 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
     rec_append: async ({ uid, seq, data }) => {
       const clip = store.clipByUid(uid);
       if (clip === null || clip.status !== "recording") return { ok: false as const, message: "No recording in progress with that id." };
-      store.appendAudio(clip.id, Buffer.from(data, "base64"), now());
-      if (!hostBroken.has(uid)) await hostCall(uid, () => host.call("recAppend", { id: uid, seq, data }));
+      await appendSlice(uid, clip.id, seq, data);
       return { ok: true as const };
     },
-    rec_finish: async ({ uid }) => {
+    rec_finish: async ({ uid, appends, tail, wait }) => {
+      const started = Date.now();
       const clip = store.clipByUid(uid);
       if (clip === null) return { ok: false as const, message: "No recording with that id." };
-      if (clip.status !== "recording") return { ok: true as const };
-      store.setStatus(clip.id, "transcribing");
-      publish(clip.id, "transcribing", 0, clip.day);
-      const broken = hostBroken.get(uid);
-      if (broken !== undefined) {
-        fail(uid, clip.id, clip.day, broken);
-        return { ok: true as const };
+      if (clip.status === "recording") {
+        // Appends sent just before Stop may still be on their way; the tail goes in after them.
+        if (appends !== undefined) await appendsLanded(uid, appends);
+        if (tail !== undefined && tail !== "") await appendSlice(uid, clip.id, landed.get(uid) ?? 0, tail);
+        landed.delete(uid);
+        store.setStatus(clip.id, "transcribing");
+        publish(clip.id, "transcribing", 0, clip.day);
+        const broken = hostBroken.get(uid);
+        if (broken !== undefined) fail(uid, clip.id, clip.day, broken);
+        else if (!(await hostCall(uid, () => host.call("recFinish", { id: uid })))) fail(uid, clip.id, clip.day, hostBroken.get(uid) ?? "The host could not finish the recording.");
       }
-      if (!(await hostCall(uid, () => host.call("recFinish", { id: uid })))) fail(uid, clip.id, clip.day, hostBroken.get(uid) ?? "The host could not finish the recording.");
-      return { ok: true as const };
+      if (wait !== true) return { ok: true as const };
+      return { ok: true as const, result: await waitFor(store.clipByUid(uid), RESULT_WAIT_MS - (Date.now() - started)) };
     },
     rec_cancel: async ({ uid }) => {
       const clip = store.clipByUid(uid);
@@ -162,6 +199,7 @@ export function registerRecordings(deps: RecordingDeps): { onRecSignal: (payload
         publish(clip.id, "deleted", 0, clip.day);
       }
       hostBroken.delete(uid);
+      landed.delete(uid);
       settle(uid, { status: "failed", id: clip?.id ?? 0, message: "cancelled" });
       await host.call("recCancel", { id: uid }).catch(() => undefined);
       return { ok: true as const };

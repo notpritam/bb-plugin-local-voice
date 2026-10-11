@@ -107,7 +107,9 @@ describe("installComposerBridge", () => {
     const form = new FormData();
     form.set("file", new File(["whole"], "recording.webm", { type: "audio/webm" }));
     const response = await win.fetch(BB_VOICE_PATH, { method: "POST", body: form });
-    expect(calls.map((c) => c.method)).toEqual(["rec_start", "rec_append", "rec_finish", "rec_result"]);
+    // The whole file rides on Stop itself.
+    expect(calls.map((c) => c.method)).toEqual(["rec_start", "rec_finish", "rec_result"]);
+    expect(calls[1]!.input).toMatchObject({ appends: 0, tail: btoa("whole"), wait: true });
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: { code: "transcription_failed", message: "Speech recognition failed: router down — saved in History, retry from the Voice panel." } });
   });

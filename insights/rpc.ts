@@ -129,7 +129,14 @@ export type RecResultDto = z.infer<typeof recResultSchema>;
 export const recordingRpcContract = defineRpcContract({
   rec_start: { input: z.object({ uid, surface, mime: z.string().min(1).max(100) }).strict(), output: started },
   rec_append: { input: z.object({ uid, seq: z.number().int().nonnegative(), data: z.string().max(2_800_000) }).strict(), output: ack },
-  rec_finish: { input: z.object({ uid }).strict(), output: ack },
+  /**
+   * Stop. `appends`: how many appends the client sent, some maybe still on their way (the tail waits for them);
+   * `tail`: the slices not sent yet; `wait`: hold the answer until the text is ready (or `pending` after ~25 s).
+   */
+  rec_finish: {
+    input: z.object({ uid, appends: z.number().int().nonnegative().optional(), tail: z.string().max(2_800_000).optional(), wait: z.boolean().optional() }).strict(),
+    output: z.union([...ack.options, z.object({ ok: z.literal(true), result: recResultSchema }).strict()]),
+  },
   rec_cancel: { input: z.object({ uid }).strict(), output: ack },
   /** Long-polls up to ~25 s for the outcome; call again on `pending`. */
   rec_result: { input: z.object({ uid }).strict(), output: recResultSchema },

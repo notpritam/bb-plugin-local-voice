@@ -108,6 +108,9 @@ export class RecordingUpload {
   private readonly all: Blob[] = [];
   private uploading: Promise<void> = Promise.resolve();
   private seq = 0;
+  /** Appends the server acknowledged, and whether one is on its way: what Stop tells the server to wait for. */
+  private landed = 0;
+  private inFlight = false;
   private started: Promise<boolean>;
   private ended = false;
   private cancelled = false;
@@ -151,11 +154,15 @@ export class RecordingUpload {
       const batch = this.queue.splice(0);
       const seq = this.seq;
       this.seq += 1;
+      this.inFlight = true;
       try {
         const r = await this.rpc.call<{ ok: boolean }>("rec_append", { uid: this.uid, seq, data: await blobToBase64(new Blob(batch, { type: this.mime })) });
-        if (!r.ok) this.queue.unshift(...batch);
+        if (r.ok) this.landed += 1;
+        else this.queue.unshift(...batch);
       } catch {
-        this.queue.unshift(...batch); // resent whole at finish
+        this.queue.unshift(...batch); // goes up with the next append, or with Stop
+      } finally {
+        this.inFlight = false;
       }
     });
   }
@@ -170,16 +177,11 @@ export class RecordingUpload {
     if (this.ended) throw new TranscriptionFailed("This recording was already finished.", null);
     this.ended = true;
     this.markStopped();
-    await this.uploading;
     const streamed = await this.started;
-    if (!streamed || this.queue.length > 0) {
+    if (!streamed) {
       // Whole-file fallback: everything we have, in one request.
       this.queue.length = 0;
       const blob = new Blob(this.all, { type: this.mime });
-      if (streamed) {
-        // Some slices never made it; the server-side row is incomplete, so send the lot under a fresh id.
-        await this.rpc.call("rec_cancel", { uid: this.uid }).catch(() => undefined);
-      }
       const uid = newClipUid();
       const r = await this.rpc.call<{ ok: boolean; id?: number; message?: string }>("rec_transcribe", { uid, surface: this.surface, mime: this.mime, data: await blobToBase64(blob) }).catch((error: unknown) => {
         throw new TranscriptionFailed(error instanceof Error ? error.message : String(error), null);
@@ -187,11 +189,28 @@ export class RecordingUpload {
       if (!r.ok) throw new TranscriptionFailed(r.message ?? "Could not start the transcription.", null);
       return this.poll(uid, signal);
     }
-    const r = await this.rpc.call<{ ok: boolean; message?: string }>("rec_finish", { uid: this.uid }).catch((error: unknown) => {
+    // Stop is one request, sent without waiting for an append still on its way (the server orders the
+    // tail after it): the slices not sent yet ride along and the answer is the text. Over a remote link
+    // that is one round trip after Stop instead of three.
+    const appends = this.landed + (this.inFlight ? 1 : 0);
+    const tail = this.queue.splice(0);
+    void this.uploading.then(() => this.resendFailed());
+    const input = { uid: this.uid, appends, wait: true, ...(tail.length === 0 ? {} : { tail: await blobToBase64(new Blob(tail, { type: this.mime })) }) };
+    const r = await this.rpc.call<{ ok: boolean; message?: string; result?: RecResultDto }>("rec_finish", input, signal).catch((error: unknown) => {
+      if (error instanceof Error && error.name === "AbortError") throw error;
       throw new TranscriptionFailed(error instanceof Error ? error.message : String(error), null);
     });
     if (!r.ok) throw new TranscriptionFailed(r.message ?? "Could not finish the recording.", null);
+    if (r.result?.status === "done") return { id: r.result.id, text: r.result.text };
+    if (r.result?.status === "failed") throw new TranscriptionFailed(r.result.message, r.result.id || null);
     return this.poll(this.uid, signal);
+  }
+
+  /** An append that failed after Stop went out put its slices back; the server is waiting for them. */
+  private async resendFailed(): Promise<void> {
+    const failed = this.queue.splice(0);
+    if (failed.length === 0) return;
+    await this.rpc.call("rec_append", { uid: this.uid, seq: this.seq, data: await blobToBase64(new Blob(failed, { type: this.mime })) }).catch(() => undefined);
   }
 
   private async poll(uid: string, signal?: AbortSignal): Promise<RecordingOutcome> {
