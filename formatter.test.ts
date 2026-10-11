@@ -48,12 +48,22 @@ afterEach(() => {
 });
 
 describe("format rules", () => {
-  it("skips short English, always formats Devanagari", () => {
+  it("skips short English that is already clean, always formats Devanagari and anything with work to do", () => {
     expect(needsFormatting("Hello there.")).toBe(false);
-    expect(needsFormatting("ship it right now")).toBe(false);
-    expect(needsFormatting("ship it right now please")).toBe(true);
+    expect(needsFormatting("ship it right now please")).toBe(false);
+    expect(needsFormatting("What all the changes are in there? So do let me know.")).toBe(false);
+    expect(needsFormatting("Now, what you need to do is to organize.")).toBe(false);
+    // Past twelve words, Claude arranges the message.
+    expect(needsFormatting(Array.from({ length: 13 }, () => "word").join(" "))).toBe(true);
     expect(needsFormatting("भेज दो")).toBe(true);
     expect(needsFormatting("ok भेज")).toBe(true);
+    // Numbers to digits, stutters, false starts, fillers, spoken file names.
+    expect(needsFormatting("Add five thousand more to one child.")).toBe(true);
+    expect(needsFormatting("Add, add the sheet.")).toBe(true);
+    expect(needsFormatting("At least you call- Audio part is working")).toBe(true);
+    expect(needsFormatting("Ship the build today and all")).toBe(true);
+    expect(needsFormatting("It is, you know, broken")).toBe(true);
+    expect(needsFormatting("open app dot t s x")).toBe(true);
   });
 
   it("gives 3 s plus 10 ms a character, at most 30 s", () => {
@@ -134,7 +144,7 @@ describe("ClaudeFormatter", () => {
     formatter.warm("haiku", true);
     expect(calls).toHaveLength(1);
     expect(formatter.hasSpare).toBe(true);
-    await formatter.format("done ship it today please", { translate: true, model: "haiku", signal: signal() });
+    await formatter.format("done ship it today and all", { translate: true, model: "haiku", signal: signal() });
     expect(calls).toHaveLength(2); // the spare answered; the next one is already up
     expect(formatter.hasSpare).toBe(true);
     // A different language rule replaces the spare.
@@ -250,7 +260,7 @@ describe("Claude route", () => {
       return run();
     };
     formatter = new ClaudeFormatter({ cwd: "/tmp/x", queryImpl: errorQuery, executable: null, env: () => ({ ANTHROPIC_BASE_URL: "http://pool" }) });
-    await expect(formatter.format("so basically we need to ship the dashboard today", { translate: true, model: "haiku", signal: signal() })).resolves.toBeNull();
+    await expect(formatter.format("so basically we need to ship the two dashboards today", { translate: true, model: "haiku", signal: signal() })).resolves.toBeNull();
     expect((calls[0]!.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe("http://pool");
     await expect(askClaude({ cwd: "/tmp/x", queryImpl: errorQuery, executable: null }, { model: "haiku", system: "S", prompt: "P", timeoutMs: 1000 })).resolves.toBeNull();
   });

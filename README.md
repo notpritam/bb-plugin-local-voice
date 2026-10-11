@@ -76,7 +76,7 @@ Then hard-refresh the bb app: the **Voice** page appears in the sidebar and a mi
 
 The router-era settings (`serverUrl`, `polishModel`, `asrModel`) are ignored if still saved.
 
-**Claude's login:** the host runs Claude Code with thinking off, no tools, no settings or MCP servers, one turn, in a private empty directory. When bb's Account Pooler has a token for the primary host, Claude goes through the pooler (the same route bb's own Claude threads take there); otherwise it uses the host's own Claude Code login. Short English (four words or fewer) skips Claude; anything with Devanagari always goes through it. If Claude is slow (3 s + 10 ms a character), fails, or answers instead of cleaning up, Scribe's text is used.
+**Claude's login:** the host runs Claude Code with thinking off, no tools, no settings or MCP servers, one turn, in a private empty directory. When bb's Account Pooler has a token for the primary host, Claude goes through the pooler (the same route bb's own Claude threads take there); otherwise it uses the host's own Claude Code login. Short English (12 words or fewer) that is already clean skips Claude (~1.3 s from Stop to text instead of ~2.3 s); numbers spoken as words, stutters, cut-off false starts, fillers ("and all", "you know") and spoken file names still go through it, and so does anything with Devanagari. If Claude is slow (3 s + 10 ms a character), fails, or answers instead of cleaning up, Scribe's text is used.
 
 ## The Voice panel (sidebar → Voice)
 

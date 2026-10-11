@@ -44,10 +44,29 @@ export function hasDevanagari(text: string): boolean {
   return DEVANAGARI.test(text);
 }
 
-/** Short English needs no formatting (Scribe's text is fine); anything with Devanagari always does. */
+/** Longest English message that can skip the formatter (~1.4 s) when nothing in it needs fixing. */
+export const SKIP_FORMAT_MAX_WORDS = 12;
+/** What Claude fixes in a short message: numbers as words, fillers, a spoken file name ("dot t s x"), a cut-off false start ("call-"). */
+const SHORT_FIXES = [
+  /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|lakh|lakhs|crore|million|billion)\b/iu,
+  /\b(and all|you know|i mean|um+|uh+)\b/iu,
+  /\bdot [a-z]\b/iu,
+  /\w-(\s|$)/u,
+];
+function hasStutter(words: readonly string[]): boolean {
+  const bare = words.map((w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ""));
+  return bare.some((w, i) => w !== "" && w === bare[i + 1]);
+}
+
+/**
+ * Short English that is already clean skips the formatter (Scribe punctuates and drops fillers itself);
+ * Devanagari, anything longer, and anything with a fix to make always go through it.
+ */
 export function needsFormatting(text: string): boolean {
   if (hasDevanagari(text)) return true;
-  return text.trim().split(/\s+/u).filter((w) => w !== "").length > 4;
+  const words = text.trim().split(/\s+/u).filter((w) => w !== "");
+  if (words.length > SKIP_FORMAT_MAX_WORDS) return true;
+  return hasStutter(words) || SHORT_FIXES.some((pattern) => pattern.test(text));
 }
 
 /** How long the formatter may take for this text: 3 s + 10 ms a character, at most 30 s. */
