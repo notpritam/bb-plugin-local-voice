@@ -135,22 +135,27 @@ export class RecordingUpload {
     return this.stoppedAt;
   }
 
-  /** Hand over a slice; uploads run one at a time, in order. */
+  /**
+   * Hand over a slice; uploads run one at a time, in order, each carrying
+   * every slice queued so far. bb's composer slices every 250 ms and a
+   * round trip over a remote link takes longer, so one slice per request
+   * fell further behind the longer you talked.
+   */
   append(slice: Blob): void {
     if (slice.size === 0 || this.cancelled) return;
     this.all.push(slice);
     this.queue.push(slice);
     this.uploading = this.uploading.then(async () => {
       if (!(await this.started)) return; // kept locally; sent whole at finish
-      const next = this.queue.shift();
-      if (next === undefined) return;
+      if (this.queue.length === 0) return; // an earlier request took it
+      const batch = this.queue.splice(0);
       const seq = this.seq;
       this.seq += 1;
       try {
-        const r = await this.rpc.call<{ ok: boolean }>("rec_append", { uid: this.uid, seq, data: await blobToBase64(next) });
-        if (!r.ok) this.queue.unshift(next);
+        const r = await this.rpc.call<{ ok: boolean }>("rec_append", { uid: this.uid, seq, data: await blobToBase64(new Blob(batch, { type: this.mime })) });
+        if (!r.ok) this.queue.unshift(...batch);
       } catch {
-        this.queue.unshift(next); // resent whole at finish
+        this.queue.unshift(...batch); // resent whole at finish
       }
     });
   }

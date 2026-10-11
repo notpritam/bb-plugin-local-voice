@@ -86,6 +86,7 @@ describe("createStreamingRecorder", () => {
     expect(media.timeslice).toBe(1000);
     expect(media.mimeType).toBe("audio/webm");
     media.tick("one");
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "rec_append")).toHaveLength(1));
     media.tick("two");
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "rec_append")).toHaveLength(2));
     const text = await recorder.stop(new AbortController().signal);

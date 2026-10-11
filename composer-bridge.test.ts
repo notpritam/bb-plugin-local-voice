@@ -65,6 +65,7 @@ describe("installComposerBridge", () => {
     const recorder = new Recorder(audioStream, { mimeType: "audio/webm" });
     recorder.start();
     recorder.emit("one");
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "rec_append")).toHaveLength(1));
     recorder.stop();
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "rec_append")).toHaveLength(2));
     expect(calls[0]).toMatchObject({ method: "rec_start", input: { surface: "composer", mime: "audio/webm" } });
